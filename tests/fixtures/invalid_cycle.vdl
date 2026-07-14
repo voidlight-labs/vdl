@@ -1,0 +1,48 @@
+// Intentionally invalid VDL file with a circular requires chain.
+// This fixture exists to test DAG validation — the compiler must detect
+// and report the cycle with a clear error message showing the circular chain.
+
+concept "cycle.a" {
+    version "1.0"
+    title "Cycle A"
+    description "First node in the intentional circular dependency chain."
+
+    requires [ "cycle.c" ]
+
+    evidence {
+        revelation {
+            source "Test Source"
+            text "This evidence exists only to satisfy the evidence presence rule."
+        }
+    }
+}
+
+concept "cycle.b" {
+    version "1.0"
+    title "Cycle B"
+    description "Second node in the intentional circular dependency chain."
+
+    requires [ "cycle.a" ]
+
+    evidence {
+        revelation {
+            source "Test Source"
+            text "This evidence exists only to satisfy the evidence presence rule."
+        }
+    }
+}
+
+concept "cycle.c" {
+    version "1.0"
+    title "Cycle C"
+    description "Third node in the intentional circular dependency chain."
+
+    requires [ "cycle.b" ]
+
+    evidence {
+        revelation {
+            source "Test Source"
+            text "This evidence exists only to satisfy the evidence presence rule."
+        }
+    }
+}

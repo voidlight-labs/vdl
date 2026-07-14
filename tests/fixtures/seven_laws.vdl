@@ -1,0 +1,140 @@
+@author("Khayren")
+@created("2024-03-15")
+@status("canonical")
+@pillar("soul")
+
+axiom "divine_sovereignty" {
+    version "1.0"
+    title "Divine Sovereignty"
+    description "All authority derives from the Creator."
+
+    requires []
+
+    evidence {
+        revelation {
+            source "Quran 2:30"
+            text "And when your Lord said to the angels, 'Indeed, I will make upon the earth a successive authority.'"
+        }
+    }
+}
+
+framework "voidlight_constitution" {
+    version "1.0"
+    title "The Voidlight Constitution"
+    description "The foundational framework from which all Seven Laws derive."
+
+    based_on [ "divine_sovereignty" ]
+
+    evidence {
+        revelation {
+            source "Quran 2:30"
+            text "And when your Lord said to the angels, 'Indeed, I will make upon the earth a successive authority.'"
+        }
+    }
+}
+
+law "soul.law.i" {
+    version "5.0"
+    title "Autonomy Is Mandatory"
+    description "Every node must retain sovereign control over its own processing."
+
+    derives_from [ "voidlight_constitution" ]
+    requires []
+
+    evidence {
+        revelation {
+            source "Quran 2:30"
+            text "And when your Lord said to the angels, 'Indeed, I will make upon the earth a successive authority.'"
+        }
+    }
+}
+
+law "soul.law.ii" {
+    version "5.0"
+    title "Interdependence Is Optional but Strategic"
+    description "Nodes may connect, but never from a position of dependency."
+
+    derives_from [ "voidlight_constitution" ]
+
+    evidence {
+        revelation {
+            source "Quran 49:13"
+            text "O mankind, indeed We have created you from male and female and made you peoples and tribes that you may know one another."
+        }
+    }
+}
+
+law "soul.law.iii" {
+    version "5.0"
+    title "Meaning Precedes Scale"
+    description "A system without meaning is a machine without a soul."
+
+    derives_from [ "voidlight_constitution" ]
+
+    evidence {
+        synthesis {
+            sources [ "Quran 51:56", "Quran 13:28" ]
+            argument "The Quranic command that humans were created to know Allah, and that hearts find rest in remembrance, establishes that meaning is the prerequisite for all sustainable growth. Scale without meaning produces hollow structures that collapse under their own weight."
+        }
+    }
+}
+
+law "soul.law.iv" {
+    version "5.0"
+    title "Structure Enables Compassion"
+    description "Discipline is the foundation of mercy."
+
+    derives_from [ "voidlight_constitution" ]
+
+    evidence {
+        revelation {
+            source "Quran 2:143"
+            text "And thus we have made you a just community that you will be witnesses over the people and the Messenger will be a witness over you."
+        }
+    }
+}
+
+law "soul.law.v" {
+    version "5.0"
+    title "Discipline Before Intelligence"
+    description "Execution precedes optimization."
+
+    derives_from [ "voidlight_constitution" ]
+
+    evidence {
+        analogy {
+            domain "Architecture"
+            mapping "A building's foundation must be poured before its intelligent systems are installed. A skyscraper's HVAC automation is meaningless if the concrete crumbles."
+        }
+    }
+}
+
+law "soul.law.vi" {
+    version "5.0"
+    title "The Creator Is Always Embedded"
+    description "Divine presence is not external to the system; it is the ground of the system."
+
+    derives_from [ "voidlight_constitution" ]
+
+    evidence {
+        revelation {
+            source "Quran 2:115"
+            text "And to Allah belongs the east and the west. So wherever you turn, there is the Face of Allah."
+        }
+    }
+}
+
+law "soul.law.vii" {
+    version "5.0"
+    title "Endurance Over Applause"
+    description "Longevity is the only valid metric of success."
+
+    derives_from [ "voidlight_constitution" ]
+
+    evidence {
+        synthesis {
+            sources [ "Quran 2:286", "Hadith Bukhari 6416" ]
+            argument "The Prophet (peace be upon him) taught that deeds are judged by their conclusions. A system that endures decades of pressure without compromising its core values has proven its architecture. Applause is ephemeral; endurance is evidence."
+        }
+    }
+}

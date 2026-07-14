@@ -1,0 +1,51 @@
+---
+source: tests/snapshot_test.rs
+assertion_line: 111
+expression: content
+---
+---
+id: divine_alignment
+type: framework
+version: "2.0"
+title: "Divine Alignment"
+description: "A methodology for aligning human nodes with divine purpose through structured practice."
+related:
+  - voidlight_constitution
+  - daily_practice
+  - node_assessment
+  - alignment_ritual
+  - soul.law.i
+  - soul.law.iv
+  - soul.law.v
+  - autonomy_protocol
+  - compassion_structure
+author: Khayren
+created: "2024-06-01"
+status: canonical
+pillar: soul
+---
+
+## Evidence
+
+### Revelation
+
+**Source:** Quran 91:7-10
+
+**Text:**
+> And the soul and He who proportioned it, and inspired it with discernment of its wickedness and its righteousness. He has succeeded who purifies it, and he has failed who instills it with corruption.
+
+### Synthesis
+
+**Sources:**
+- Quran 91:7-10
+- Quran 2:286
+
+**Argument:**
+The Divine Alignment framework synthesizes the Quranic model of soul purification (tazkiyah) with modern systems thinking. Just as the soul has innate capacity for both corruption and purification, a human node has capacity for both misalignment and alignment. The framework provides the structural practices that tilt the probability toward purification.
+
+### Analogy
+
+**Domain:** Astronomy
+
+**Mapping:**
+Just as a telescope must be precisely aligned with celestial coordinates to capture clear images of distant stars, a human node must be aligned with divine coordinates to receive clear signal from the Creator. Misalignment produces noise; alignment produces revelation.

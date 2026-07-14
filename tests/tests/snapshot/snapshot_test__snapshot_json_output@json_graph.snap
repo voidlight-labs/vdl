@@ -1,0 +1,255 @@
+---
+source: tests/snapshot_test.rs
+assertion_line: 43
+expression: content
+---
+{
+  "entities": [
+    {
+      "id": "divine_sovereignty",
+      "type": "axiom",
+      "version": "1.0",
+      "title": "Divine Sovereignty",
+      "description": "All authority derives from the Creator.",
+      "properties": {},
+      "annotations": [
+        {
+          "name": "author",
+          "value": "Khayren"
+        },
+        {
+          "name": "created",
+          "value": "2024-03-15"
+        },
+        {
+          "name": "status",
+          "value": "canonical"
+        },
+        {
+          "name": "pillar",
+          "value": "soul"
+        }
+      ],
+      "evidence": {
+        "revelations": [
+          {
+            "source": "Quran 2:30",
+            "text": "And when your Lord said to the angels, 'Indeed, I will make upon the earth a successive authority.'",
+            "translator": null
+          }
+        ],
+        "syntheses": [],
+        "analogies": []
+      }
+    },
+    {
+      "id": "voidlight_constitution",
+      "type": "framework",
+      "version": "1.0",
+      "title": "The Voidlight Constitution",
+      "description": "The foundational framework from which all Seven Laws derive.",
+      "properties": {},
+      "annotations": [],
+      "evidence": {
+        "revelations": [
+          {
+            "source": "Quran 2:30",
+            "text": "And when your Lord said to the angels, 'Indeed, I will make upon the earth a successive authority.'",
+            "translator": null
+          }
+        ],
+        "syntheses": [],
+        "analogies": []
+      }
+    },
+    {
+      "id": "soul.law.i",
+      "type": "law",
+      "version": "5.0",
+      "title": "Autonomy Is Mandatory",
+      "description": "Every node must retain sovereign control over its own processing.",
+      "properties": {},
+      "annotations": [],
+      "evidence": {
+        "revelations": [
+          {
+            "source": "Quran 2:30",
+            "text": "And when your Lord said to the angels, 'Indeed, I will make upon the earth a successive authority.'",
+            "translator": null
+          }
+        ],
+        "syntheses": [],
+        "analogies": []
+      }
+    },
+    {
+      "id": "soul.law.ii",
+      "type": "law",
+      "version": "5.0",
+      "title": "Interdependence Is Optional but Strategic",
+      "description": "Nodes may connect, but never from a position of dependency.",
+      "properties": {},
+      "annotations": [],
+      "evidence": {
+        "revelations": [
+          {
+            "source": "Quran 49:13",
+            "text": "O mankind, indeed We have created you from male and female and made you peoples and tribes that you may know one another.",
+            "translator": null
+          }
+        ],
+        "syntheses": [],
+        "analogies": []
+      }
+    },
+    {
+      "id": "soul.law.iii",
+      "type": "law",
+      "version": "5.0",
+      "title": "Meaning Precedes Scale",
+      "description": "A system without meaning is a machine without a soul.",
+      "properties": {},
+      "annotations": [],
+      "evidence": {
+        "revelations": [],
+        "syntheses": [
+          {
+            "sources": [
+              "Quran 51:56",
+              "Quran 13:28"
+            ],
+            "argument": "The Quranic command that humans were created to know Allah, and that hearts find rest in remembrance, establishes that meaning is the prerequisite for all sustainable growth. Scale without meaning produces hollow structures that collapse under their own weight."
+          }
+        ],
+        "analogies": []
+      }
+    },
+    {
+      "id": "soul.law.iv",
+      "type": "law",
+      "version": "5.0",
+      "title": "Structure Enables Compassion",
+      "description": "Discipline is the foundation of mercy.",
+      "properties": {},
+      "annotations": [],
+      "evidence": {
+        "revelations": [
+          {
+            "source": "Quran 2:143",
+            "text": "And thus we have made you a just community that you will be witnesses over the people and the Messenger will be a witness over you.",
+            "translator": null
+          }
+        ],
+        "syntheses": [],
+        "analogies": []
+      }
+    },
+    {
+      "id": "soul.law.v",
+      "type": "law",
+      "version": "5.0",
+      "title": "Discipline Before Intelligence",
+      "description": "Execution precedes optimization.",
+      "properties": {},
+      "annotations": [],
+      "evidence": {
+        "revelations": [],
+        "syntheses": [],
+        "analogies": [
+          {
+            "domain": "Architecture",
+            "mapping": "A building's foundation must be poured before its intelligent systems are installed. A skyscraper's HVAC automation is meaningless if the concrete crumbles."
+          }
+        ]
+      }
+    },
+    {
+      "id": "soul.law.vi",
+      "type": "law",
+      "version": "5.0",
+      "title": "The Creator Is Always Embedded",
+      "description": "Divine presence is not external to the system; it is the ground of the system.",
+      "properties": {},
+      "annotations": [],
+      "evidence": {
+        "revelations": [
+          {
+            "source": "Quran 2:115",
+            "text": "And to Allah belongs the east and the west. So wherever you turn, there is the Face of Allah.",
+            "translator": null
+          }
+        ],
+        "syntheses": [],
+        "analogies": []
+      }
+    },
+    {
+      "id": "soul.law.vii",
+      "type": "law",
+      "version": "5.0",
+      "title": "Endurance Over Applause",
+      "description": "Longevity is the only valid metric of success.",
+      "properties": {},
+      "annotations": [],
+      "evidence": {
+        "revelations": [],
+        "syntheses": [
+          {
+            "sources": [
+              "Quran 2:286",
+              "Hadith Bukhari 6416"
+            ],
+            "argument": "The Prophet (peace be upon him) taught that deeds are judged by their conclusions. A system that endures decades of pressure without compromising its core values has proven its architecture. Applause is ephemeral; endurance is evidence."
+          }
+        ],
+        "analogies": []
+      }
+    }
+  ],
+  "relationships": [
+    {
+      "from": "voidlight_constitution",
+      "to": "divine_sovereignty",
+      "type": "based_on"
+    },
+    {
+      "from": "soul.law.i",
+      "to": "voidlight_constitution",
+      "type": "derives_from"
+    },
+    {
+      "from": "soul.law.ii",
+      "to": "voidlight_constitution",
+      "type": "derives_from"
+    },
+    {
+      "from": "soul.law.iii",
+      "to": "voidlight_constitution",
+      "type": "derives_from"
+    },
+    {
+      "from": "soul.law.iv",
+      "to": "voidlight_constitution",
+      "type": "derives_from"
+    },
+    {
+      "from": "soul.law.v",
+      "to": "voidlight_constitution",
+      "type": "derives_from"
+    },
+    {
+      "from": "soul.law.vi",
+      "to": "voidlight_constitution",
+      "type": "derives_from"
+    },
+    {
+      "from": "soul.law.vii",
+      "to": "voidlight_constitution",
+      "type": "derives_from"
+    }
+  ],
+  "metadata": {
+    "compiled_at": "2026-07-13T23:54:46Z",
+    "version": "0.1.0"
+  }
+}

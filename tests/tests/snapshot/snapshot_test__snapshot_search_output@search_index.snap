@@ -1,0 +1,163 @@
+---
+source: tests/snapshot_test.rs
+assertion_line: 64
+expression: content
+---
+[
+  {
+    "id": "divine_sovereignty",
+    "title": "Divine Sovereignty",
+    "description": "All authority derives from the Creator.",
+    "content_text": "Divine Sovereignty All authority derives from the Creator. Revelation: Quran 2:30 And when your Lord said to the angels, 'Indeed, I will make upon the earth a successive authority.'",
+    "type": "axiom",
+    "tags": [
+      "Khayren",
+      "canonical",
+      "soul",
+      "axiom"
+    ]
+  },
+  {
+    "id": "voidlight_constitution",
+    "title": "The Voidlight Constitution",
+    "description": "The foundational framework from which all Seven Laws derive.",
+    "content_text": "The Voidlight Constitution The foundational framework from which all Seven Laws derive. Revelation: Quran 2:30 And when your Lord said to the angels, 'Indeed, I will make upon the earth a successive authority.'",
+    "type": "framework",
+    "tags": [
+      "framework"
+    ]
+  },
+  {
+    "id": "soul.law.i",
+    "title": "Autonomy Is Mandatory",
+    "description": "Every node must retain sovereign control over its own processing.",
+    "content_text": "Autonomy Is Mandatory Every node must retain sovereign control over its own processing. Revelation: Quran 2:30 And when your Lord said to the angels, 'Indeed, I will make upon the earth a successive authority.'",
+    "type": "law",
+    "tags": [
+      "law"
+    ]
+  },
+  {
+    "id": "soul.law.ii",
+    "title": "Interdependence Is Optional but Strategic",
+    "description": "Nodes may connect, but never from a position of dependency.",
+    "content_text": "Interdependence Is Optional but Strategic Nodes may connect, but never from a position of dependency. Revelation: Quran 49:13 O mankind, indeed We have created you from male and female and made you peoples and tribes that you may know one another.",
+    "type": "law",
+    "tags": [
+      "law"
+    ]
+  },
+  {
+    "id": "soul.law.iii",
+    "title": "Meaning Precedes Scale",
+    "description": "A system without meaning is a machine without a soul.",
+    "content_text": "Meaning Precedes Scale A system without meaning is a machine without a soul. Synthesis (Quran 51:56, Quran 13:28): The Quranic command that humans were created to know Allah, and that hearts find rest in remembrance, establishes that meaning is the prerequisite for all sustainable growth. Scale without meaning produces hollow structures that collapse under their own weight.",
+    "type": "law",
+    "tags": [
+      "law"
+    ]
+  },
+  {
+    "id": "soul.law.iv",
+    "title": "Structure Enables Compassion",
+    "description": "Discipline is the foundation of mercy.",
+    "content_text": "Structure Enables Compassion Discipline is the foundation of mercy. Revelation: Quran 2:143 And thus we have made you a just community that you will be witnesses over the people and the Messenger will be a witness over you.",
+    "type": "law",
+    "tags": [
+      "law"
+    ]
+  },
+  {
+    "id": "soul.law.v",
+    "title": "Discipline Before Intelligence",
+    "description": "Execution precedes optimization.",
+    "content_text": "Discipline Before Intelligence Execution precedes optimization. Analogy (Architecture): A building's foundation must be poured before its intelligent systems are installed. A skyscraper's HVAC automation is meaningless if the concrete crumbles.",
+    "type": "law",
+    "tags": [
+      "law"
+    ]
+  },
+  {
+    "id": "soul.law.vi",
+    "title": "The Creator Is Always Embedded",
+    "description": "Divine presence is not external to the system; it is the ground of the system.",
+    "content_text": "The Creator Is Always Embedded Divine presence is not external to the system; it is the ground of the system. Revelation: Quran 2:115 And to Allah belongs the east and the west. So wherever you turn, there is the Face of Allah.",
+    "type": "law",
+    "tags": [
+      "law"
+    ]
+  },
+  {
+    "id": "soul.law.vii",
+    "title": "Endurance Over Applause",
+    "description": "Longevity is the only valid metric of success.",
+    "content_text": "Endurance Over Applause Longevity is the only valid metric of success. Synthesis (Quran 2:286, Hadith Bukhari 6416): The Prophet (peace be upon him) taught that deeds are judged by their conclusions. A system that endures decades of pressure without compromising its core values has proven its architecture. Applause is ephemeral; endurance is evidence.",
+    "type": "law",
+    "tags": [
+      "law"
+    ]
+  },
+  {
+    "id": "divine_alignment",
+    "title": "Divine Alignment",
+    "description": "A methodology for aligning human nodes with divine purpose through structured practice.",
+    "content_text": "Divine Alignment A methodology for aligning human nodes with divine purpose through structured practice. Revelation: Quran 91:7-10 And the soul and He who proportioned it, and inspired it with discernment of its wickedness and its righteousness. He has succeeded who purifies it, and he has failed who instills it with corruption. Synthesis (Quran 91:7-10, Quran 2:286): The Divine Alignment framework synthesizes the Quranic model of soul purification (tazkiyah) with modern systems thinking. Just as the soul has innate capacity for both corruption and purification, a human node has capacity for both misalignment and alignment. The framework provides the structural practices that tilt the probability toward purification. Analogy (Astronomy): Just as a telescope must be precisely aligned with celestial coordinates to capture clear images of distant stars, a human node must be aligned with divine coordinates to receive clear signal from the Creator. Misalignment produces noise; alignment produces revelation.",
+    "type": "framework",
+    "tags": [
+      "Khayren",
+      "canonical",
+      "soul",
+      "framework"
+    ]
+  },
+  {
+    "id": "daily_practice",
+    "title": "Daily Practice",
+    "description": "The daily ritual of node alignment through prescribed acts of worship and reflection.",
+    "content_text": "Daily Practice The daily ritual of node alignment through prescribed acts of worship and reflection. Revelation: Quran 2:238 Maintain with care the obligatory prayers and the middle prayer, and stand before Allah, devoutly obedient.",
+    "type": "concept",
+    "tags": [
+      "concept"
+    ]
+  },
+  {
+    "id": "node_assessment",
+    "title": "Node Assessment",
+    "description": "Evaluating the alignment state of a node through structured self-examination.",
+    "content_text": "Node Assessment Evaluating the alignment state of a node through structured self-examination. Revelation: Quran 13:28 Those who have believed and whose hearts are assured by the remembrance of Allah. Unquestionably, by the remembrance of Allah hearts are assured.",
+    "type": "concept",
+    "tags": [
+      "concept"
+    ]
+  },
+  {
+    "id": "alignment_ritual",
+    "title": "Alignment Ritual",
+    "description": "A formal practice for recalibrating a node's orientation toward divine purpose.",
+    "content_text": "Alignment Ritual A formal practice for recalibrating a node's orientation toward divine purpose. Analogy (Navigation): A ship's compass must be regularly calibrated against true north. Similarly, a human node must periodically perform alignment rituals to correct drift accumulated from daily noise and distraction.",
+    "type": "concept",
+    "tags": [
+      "concept"
+    ]
+  },
+  {
+    "id": "autonomy_protocol",
+    "title": "Autonomy Protocol",
+    "description": "Technical and spiritual practices that preserve node sovereignty.",
+    "content_text": "Autonomy Protocol Technical and spiritual practices that preserve node sovereignty. Synthesis (Quran 2:30, Quran 33:72): The trust (amanah) offered to the heavens and the earth, which they refused but humanity bore, implies a responsibility for autonomous decision-making. The Autonomy Protocol encodes this divine mandate into actionable practices.",
+    "type": "concept",
+    "tags": [
+      "concept"
+    ]
+  },
+  {
+    "id": "compassion_structure",
+    "title": "Compassion Structure",
+    "description": "The organizational and interpersonal framework that channels mercy effectively.",
+    "content_text": "Compassion Structure The organizational and interpersonal framework that channels mercy effectively. Revelation: Quran 2:143 And thus we have made you a just community that you will be witnesses over the people and the Messenger will be a witness over you.",
+    "type": "concept",
+    "tags": [
+      "concept"
+    ]
+  }
+]

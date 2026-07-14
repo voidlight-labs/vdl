@@ -1,0 +1,29 @@
+---
+source: tests/snapshot_test.rs
+assertion_line: 88
+expression: content
+---
+digraph VDL_Knowledge_Graph {
+    rankdir=TB;
+    node [shape=box, style=filled, fontname="Helvetica"];
+    edge [fontname="Helvetica", fontsize=10];
+
+    "divine_sovereignty" [label="Divine Sovereignty", fillcolor="#E8D5B7"];
+    "voidlight_constitution" [label="The Voidlight Constitution", fillcolor="#D4A373"];
+    "soul.law.i" [label="Autonomy Is Mandatory", fillcolor="#C75B39"];
+    "soul.law.ii" [label="Interdependence Is Optional but Strategic", fillcolor="#C75B39"];
+    "soul.law.iii" [label="Meaning Precedes Scale", fillcolor="#C75B39"];
+    "soul.law.iv" [label="Structure Enables Compassion", fillcolor="#C75B39"];
+    "soul.law.v" [label="Discipline Before Intelligence", fillcolor="#C75B39"];
+    "soul.law.vi" [label="The Creator Is Always Embedded", fillcolor="#C75B39"];
+    "soul.law.vii" [label="Endurance Over Applause", fillcolor="#C75B39"];
+
+    "voidlight_constitution" -> "divine_sovereignty" [label="based_on"];
+    "soul.law.i" -> "voidlight_constitution" [label="derives_from"];
+    "soul.law.ii" -> "voidlight_constitution" [label="derives_from"];
+    "soul.law.iii" -> "voidlight_constitution" [label="derives_from"];
+    "soul.law.iv" -> "voidlight_constitution" [label="derives_from"];
+    "soul.law.v" -> "voidlight_constitution" [label="derives_from"];
+    "soul.law.vi" -> "voidlight_constitution" [label="derives_from"];
+    "soul.law.vii" -> "voidlight_constitution" [label="derives_from"];
+}
