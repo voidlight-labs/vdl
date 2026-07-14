@@ -50,6 +50,12 @@ pub enum VdlError {
         message: String,
     },
 
+    #[error("Validation failed with {count} error(s):\n{messages}")]
+    ValidationErrors {
+        count: usize,
+        messages: String,
+    },
+
     #[error("Graph error: {message}")]
     Graph { message: String },
 

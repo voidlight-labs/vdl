@@ -1,46 +1,50 @@
 pub mod node;
 pub mod query;
 
+use crate::parser::ast::EntityType;
+
 pub use node::{Edge, KnowledgeGraph};
 pub use query::{GraphError, GraphQuery};
+
+/// Return the hex fill color for a given entity type.
+///
+/// This is the canonical color scheme used by all Graphviz/DOT output in the
+/// compiler (both the `compile` target and the `graph` CLI command).
+pub fn entity_type_color(entity_type: EntityType) -> &'static str {
+    match entity_type {
+        EntityType::Axiom => "#E8D5B7",
+        EntityType::Framework => "#D4A373",
+        EntityType::Law => "#C75B39",
+        EntityType::Principle => "#6B8E23",
+        EntityType::Concept => "#5F9EA0",
+        EntityType::Artifact => "#9370DB",
+        EntityType::Pillar => "#2F4F4F",
+        EntityType::Document => "#999999",
+        EntityType::Project => "#999999",
+        EntityType::Release => "#999999",
+        EntityType::Persona => "#999999",
+        EntityType::Collection => "#999999",
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::error::SourceLocation;
-    use crate::parser::ast::{
-        Annotation, Entity, EntityType, EvidenceBlock, Module, Relationship, RelationshipType,
-    };
-    use std::collections::HashMap;
-
-    fn dummy_loc() -> SourceLocation {
-        SourceLocation::new("test.vdl", 1, 1)
-    }
+    use crate::parser::ast::{Entity, EntityType, Module, RelationshipType};
+    use crate::test_helpers::{test_entity, test_relationship};
 
     fn make_entity(
         id: &str,
         entity_type: EntityType,
         rels: Vec<(&str, RelationshipType)>,
     ) -> Entity {
-        Entity {
-            id: id.to_string(),
-            entity_type,
-            version: "1.0.0".to_string(),
-            title: format!("Test {}", id),
-            description: format!("Description of {}", id),
-            properties: HashMap::new(),
-            relationships: rels
-                .into_iter()
-                .map(|(target, rel_type)| Relationship {
-                    rel_type,
-                    target_id: target.to_string(),
-                    source_location: dummy_loc(),
-                })
-                .collect(),
-            evidence: None,
-            annotations: vec![],
-            source_location: dummy_loc(),
-        }
+        let mut e = test_entity(id, entity_type, "1.0.0");
+        e.title = format!("Test {}", id);
+        e.relationships = rels
+            .into_iter()
+            .map(|(target, rel_type)| test_relationship(rel_type, target))
+            .collect();
+        e
     }
 
     #[test]

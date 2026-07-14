@@ -150,7 +150,7 @@ fn analogy_to_json(analogy: &Analogy) -> JsonAnalogy {
 /// {
 ///   "entities": [ { "id": "...", "type": "...", ... } ],
 ///   "relationships": [ { "from": "...", "to": "...", "type": "requires" } ],
-///   "metadata": { "compiled_at": "...", "version": "0.1.0" }
+///   "metadata": { "compiled_at": "...", "version": "..." }
 /// }
 /// ```
 pub fn generate(graph: &KnowledgeGraph, output_path: &Path) -> VdlResult<()> {
@@ -171,7 +171,7 @@ pub fn generate(graph: &KnowledgeGraph, output_path: &Path) -> VdlResult<()> {
 
     let metadata = JsonMetadata {
         compiled_at,
-        version: "0.1.0".to_string(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
     };
 
     let output = JsonOutput {
@@ -198,18 +198,13 @@ pub fn generate(graph: &KnowledgeGraph, output_path: &Path) -> VdlResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::error::SourceLocation;
     use crate::graph::{Edge, KnowledgeGraph};
     use crate::parser::ast::{
-        Annotation, Analogy, Entity, EntityType, EvidenceBlock, RelationshipType, Revelation,
-        Synthesis,
+        Annotation, Entity, EntityType, EvidenceBlock, RelationshipType, Revelation,
     };
+    use crate::test_helpers::test_location;
     use std::collections::HashMap;
     use tempfile::NamedTempFile;
-
-    fn dummy_location() -> SourceLocation {
-        SourceLocation::new("test.vdl", 1, 1)
-    }
 
     fn make_test_graph() -> KnowledgeGraph {
         let mut graph = KnowledgeGraph::new();
@@ -230,7 +225,7 @@ mod tests {
                     source: "Primary Source".to_string(),
                     text: "The being is the purpose.".to_string(),
                     translator: None,
-                    source_location: dummy_location(),
+                    source_location: test_location(),
                 }],
                 syntheses: vec![],
                 analogies: vec![],
@@ -238,9 +233,9 @@ mod tests {
             annotations: vec![Annotation {
                 name: "author".to_string(),
                 value: "Khayren".to_string(),
-                source_location: dummy_location(),
+                source_location: test_location(),
             }],
-            source_location: dummy_location(),
+            source_location: test_location(),
         };
 
         graph.nodes.insert(entity.id.clone(), entity);
@@ -267,7 +262,7 @@ mod tests {
             relationships: vec![],
             evidence: None,
             annotations: vec![],
-            source_location: dummy_location(),
+            source_location: test_location(),
         };
 
         graph.nodes.insert(entity.id.clone(), entity);
@@ -338,7 +333,7 @@ mod tests {
 
         let meta = parsed["metadata"].as_object().unwrap();
         assert!(meta.get("compiled_at").is_some());
-        assert_eq!(meta["version"], "0.1.0");
+        assert_eq!(meta["version"], env!("CARGO_PKG_VERSION"));
 
         // compiled_at should be a valid RFC 3339 timestamp
         let ts = meta["compiled_at"].as_str().unwrap();
@@ -380,13 +375,13 @@ mod tests {
                     source: "Quran".to_string(),
                     text: "Inna allaha ma'a al-sabireen".to_string(),
                     translator: Some("Saheeh International".to_string()),
-                    source_location: dummy_location(),
+                    source_location: test_location(),
                 }],
                 syntheses: vec![],
                 analogies: vec![],
             }),
             annotations: vec![],
-            source_location: dummy_location(),
+            source_location: test_location(),
         };
 
         graph.nodes.insert(entity.id.clone(), entity);
@@ -415,6 +410,6 @@ mod tests {
 
         assert!(parsed["entities"].as_array().unwrap().is_empty());
         assert!(parsed["relationships"].as_array().unwrap().is_empty());
-        assert_eq!(parsed["metadata"]["version"], "0.1.0");
+        assert_eq!(parsed["metadata"]["version"], env!("CARGO_PKG_VERSION"));
     }
 }

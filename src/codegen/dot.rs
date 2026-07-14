@@ -1,23 +1,8 @@
 use crate::error::{VdlError, VdlResult};
-use crate::graph::KnowledgeGraph;
-use crate::parser::ast::EntityType;
+use crate::graph::{entity_type_color, KnowledgeGraph};
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::Path;
-
-/// Return the hex fill color for a given entity type.
-fn entity_type_color(entity_type: EntityType) -> &'static str {
-    match entity_type {
-        EntityType::Axiom => "#E8D5B7",
-        EntityType::Framework => "#D4A373",
-        EntityType::Law => "#C75B39",
-        EntityType::Principle => "#6B8E23",
-        EntityType::Concept => "#5F9EA0",
-        EntityType::Artifact => "#9370DB",
-        EntityType::Pillar => "#2F4F4F",
-        _ => "#999999",
-    }
-}
 
 /// Escape double quotes in a string for safe use inside DOT quoted strings.
 fn escape_dot_label(label: &str) -> String {
@@ -95,29 +80,15 @@ fn io_to_codegen(e: std::io::Error) -> VdlError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::error::SourceLocation;
     use crate::graph::Edge;
     use crate::parser::ast::{Entity, EntityType, RelationshipType};
-    use std::collections::HashMap;
-    use std::path::PathBuf;
-
-    fn dummy_loc() -> SourceLocation {
-        SourceLocation::new(PathBuf::from("test.vdl"), 1, 1)
-    }
+    use crate::test_helpers::test_entity;
 
     fn make_entity(id: &str, entity_type: EntityType, title: &str) -> Entity {
-        Entity {
-            id: id.to_string(),
-            entity_type,
-            version: "0.1.0".to_string(),
-            title: title.to_string(),
-            description: String::new(),
-            properties: HashMap::new(),
-            relationships: Vec::new(),
-            evidence: None,
-            annotations: Vec::new(),
-            source_location: dummy_loc(),
-        }
+        let mut e = test_entity(id, entity_type, "1.0");
+        e.title = title.to_string();
+        e.description = String::new();
+        e
     }
 
     fn make_graph() -> KnowledgeGraph {

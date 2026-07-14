@@ -29,6 +29,99 @@ impl Span {
     }
 }
 
+/// Advance the cursor by one byte, updating line and column tracking.
+fn advance_char(bytes: &[u8], i: &mut usize, line: &mut usize, col: &mut usize) {
+    if bytes[*i] == b'\n' {
+        *line += 1;
+        *col = 1;
+    } else {
+        *col += 1;
+    }
+    *i += 1;
+}
+
+/// Build a lexer error at the given position.
+fn lexer_error(file: &Path, line: usize, col: usize, message: impl Into<String>) -> VdlError {
+    VdlError::Lexer {
+        location: SourceLocation::new(file, line, col),
+        message: message.into(),
+    }
+}
+
+/// Read a double-quoted string literal starting at the current position.
+///
+/// Assumes `bytes[*i] == b'"'`. Returns the unescaped string value and its span.
+fn read_string_literal(
+    bytes: &[u8],
+    i: &mut usize,
+    line: &mut usize,
+    col: &mut usize,
+    file: &Path,
+) -> VdlResult<(String, Span)> {
+    let start = *i;
+    let start_line = *line;
+    let start_col = *col;
+    let len = bytes.len();
+
+    advance_char(bytes, i, line, col); // consume opening quote
+
+    let mut value = String::new();
+    let mut closed = false;
+
+    while *i < len {
+        if bytes[*i] == b'"' {
+            advance_char(bytes, i, line, col);
+            closed = true;
+            break;
+        }
+
+        if bytes[*i] == b'\\' {
+            advance_char(bytes, i, line, col);
+            if *i >= len {
+                return Err(lexer_error(
+                    file,
+                    start_line,
+                    start_col,
+                    "unterminated string literal",
+                ));
+            }
+            match bytes[*i] {
+                b'\\' => value.push('\\'),
+                b'"' => value.push('"'),
+                b'n' => value.push('\n'),
+                b't' => value.push('\t'),
+                other => {
+                    return Err(lexer_error(
+                        file,
+                        *line,
+                        *col,
+                        format!("unknown escape sequence: \\ {}", other as char),
+                    ));
+                }
+            }
+            advance_char(bytes, i, line, col);
+        } else {
+            if bytes[*i] == b'\n' {
+                value.push('\n');
+            } else {
+                value.push(bytes[*i] as char);
+            }
+            advance_char(bytes, i, line, col);
+        }
+    }
+
+    if !closed {
+        return Err(lexer_error(
+            file,
+            start_line,
+            start_col,
+            "unterminated string literal",
+        ));
+    }
+
+    Ok((value, Span::new(start, *i, start_line, start_col)))
+}
+
 /// Tokenize VDL source code into a stream of tokens with span information.
 ///
 /// # Arguments
@@ -48,25 +141,6 @@ pub fn lex(source: &str, file: &Path) -> VdlResult<Vec<(Token, Span)>> {
     let mut col = 1usize;
     let mut tokens = Vec::new();
 
-    // Helper closure to advance the cursor and update line/column tracking.
-    let advance = |idx: &mut usize, l: &mut usize, c: &mut usize| {
-        if bytes[*idx] == b'\n' {
-            *l += 1;
-            *c = 1;
-        } else {
-            *c += 1;
-        }
-        *idx += 1;
-    };
-
-    // Helper to build a lexer error at the current or given position.
-    let mk_err = |l: usize, c: usize, msg: String| -> VdlError {
-        VdlError::Lexer {
-            location: SourceLocation::new(file, l, c),
-            message: msg,
-        }
-    };
-
     while i < len {
         let start = i;
         let start_line = line;
@@ -75,7 +149,7 @@ pub fn lex(source: &str, file: &Path) -> VdlResult<Vec<(Token, Span)>> {
 
         // --- Skip whitespace ---
         if c.is_ascii_whitespace() {
-            advance(&mut i, &mut line, &mut col);
+            advance_char(bytes, &mut i, &mut line, &mut col);
             continue;
         }
 
@@ -112,10 +186,11 @@ pub fn lex(source: &str, file: &Path) -> VdlResult<Vec<(Token, Span)>> {
                 }
             }
             if !closed {
-                return Err(mk_err(
+                return Err(lexer_error(
+                    file,
                     start_line,
                     start_col,
-                    "unterminated block comment".into(),
+                    "unterminated block comment",
                 ));
             }
             continue;
@@ -123,148 +198,55 @@ pub fn lex(source: &str, file: &Path) -> VdlResult<Vec<(Token, Span)>> {
 
         // --- String literal ---
         if c == b'"' {
-            advance(&mut i, &mut line, &mut col); // consume opening quote
-            let mut s = String::new();
-            let mut closed = false;
-            while i < len {
-                if bytes[i] == b'"' {
-                    advance(&mut i, &mut line, &mut col);
-                    closed = true;
-                    break;
-                }
-                if bytes[i] == b'\\' {
-                    advance(&mut i, &mut line, &mut col);
-                    if i >= len {
-                        return Err(mk_err(
-                            start_line,
-                            start_col,
-                            "unterminated string literal".into(),
-                        ));
-                    }
-                    match bytes[i] {
-                        b'\\' => s.push('\\'),
-                        b'"' => s.push('"'),
-                        b'n' => s.push('\n'),
-                        b't' => s.push('\t'),
-                        other => {
-                            return Err(mk_err(
-                                line,
-                                col,
-                                format!("unknown escape sequence: \\ {}", other as char),
-                            ));
-                        }
-                    }
-                    advance(&mut i, &mut line, &mut col);
-                } else {
-                    if bytes[i] == b'\n' {
-                        s.push('\n');
-                    } else {
-                        s.push(bytes[i] as char);
-                    }
-                    advance(&mut i, &mut line, &mut col);
-                }
-            }
-            if !closed {
-                return Err(mk_err(
-                    start_line,
-                    start_col,
-                    "unterminated string literal".into(),
-                ));
-            }
-            tokens.push((Token::String(s), Span::new(start, i, start_line, start_col)));
+            let (s, span) = read_string_literal(bytes, &mut i, &mut line, &mut col, file)?;
+            tokens.push((Token::String(s), span));
             continue;
         }
 
         // --- Annotation: @identifier("value") ---
         if c == b'@' {
-            advance(&mut i, &mut line, &mut col); // consume '@'
+            advance_char(bytes, &mut i, &mut line, &mut col); // consume '@'
             let name_start = i;
             if i >= len || !(bytes[i].is_ascii_alphabetic() || bytes[i] == b'_') {
-                return Err(mk_err(line, col, "expected identifier after @".into()));
+                return Err(lexer_error(file, line, col, "expected identifier after @"));
             }
             while i < len && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
-                advance(&mut i, &mut line, &mut col);
+                advance_char(bytes, &mut i, &mut line, &mut col);
             }
             let name = String::from_utf8_lossy(&bytes[name_start..i]).into_owned();
 
             // Expect '('
             if i >= len || bytes[i] != b'(' {
-                return Err(mk_err(
+                return Err(lexer_error(
+                    file,
                     line,
                     col,
                     format!("expected '(' after @ {}", name),
                 ));
             }
-            advance(&mut i, &mut line, &mut col);
+            advance_char(bytes, &mut i, &mut line, &mut col);
 
             // Expect string literal
             if i >= len || bytes[i] != b'"' {
-                return Err(mk_err(
+                return Err(lexer_error(
+                    file,
                     line,
                     col,
-                    "expected string literal in annotation".into(),
+                    "expected string literal in annotation",
                 ));
             }
-            let str_start_line = line;
-            let str_start_col = col;
-            advance(&mut i, &mut line, &mut col); // consume opening quote
-            let mut value = String::new();
-            let mut value_closed = false;
-            while i < len {
-                if bytes[i] == b'"' {
-                    advance(&mut i, &mut line, &mut col);
-                    value_closed = true;
-                    break;
-                }
-                if bytes[i] == b'\\' {
-                    advance(&mut i, &mut line, &mut col);
-                    if i >= len {
-                        return Err(mk_err(
-                            str_start_line,
-                            str_start_col,
-                            "unterminated string literal in annotation".into(),
-                        ));
-                    }
-                    match bytes[i] {
-                        b'\\' => value.push('\\'),
-                        b'"' => value.push('"'),
-                        b'n' => value.push('\n'),
-                        b't' => value.push('\t'),
-                        other => {
-                            return Err(mk_err(
-                                line,
-                                col,
-                                format!("unknown escape sequence: \\ {}", other as char),
-                            ));
-                        }
-                    }
-                    advance(&mut i, &mut line, &mut col);
-                } else {
-                    if bytes[i] == b'\n' {
-                        value.push('\n');
-                    } else {
-                        value.push(bytes[i] as char);
-                    }
-                    advance(&mut i, &mut line, &mut col);
-                }
-            }
-            if !value_closed {
-                return Err(mk_err(
-                    str_start_line,
-                    str_start_col,
-                    "unterminated string literal in annotation".into(),
-                ));
-            }
+            let (value, _) = read_string_literal(bytes, &mut i, &mut line, &mut col, file)?;
 
             // Expect ')'
             if i >= len || bytes[i] != b')' {
-                return Err(mk_err(
+                return Err(lexer_error(
+                    file,
                     line,
                     col,
                     format!("expected ')' after string in @ {}", name),
                 ));
             }
-            advance(&mut i, &mut line, &mut col);
+            advance_char(bytes, &mut i, &mut line, &mut col);
 
             tokens.push((
                 Token::Annotation(name, value),
@@ -277,7 +259,7 @@ pub fn lex(source: &str, file: &Path) -> VdlResult<Vec<(Token, Span)>> {
         if c.is_ascii_alphabetic() || c == b'_' {
             let id_start = i;
             while i < len && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
-                advance(&mut i, &mut line, &mut col);
+                advance_char(bytes, &mut i, &mut line, &mut col);
             }
             let word = &source[id_start..i];
             let token = match word {
@@ -323,7 +305,8 @@ pub fn lex(source: &str, file: &Path) -> VdlResult<Vec<(Token, Span)>> {
                 "mapping" => Token::Mapping,
                 // Unknown bare word → lex error
                 _ => {
-                    return Err(mk_err(
+                    return Err(lexer_error(
+                        file,
                         start_line,
                         start_col,
                         format!("unknown word: '{}'", word),
@@ -342,14 +325,15 @@ pub fn lex(source: &str, file: &Path) -> VdlResult<Vec<(Token, Span)>> {
             b']' => Token::RBracket,
             b',' => Token::Comma,
             _ => {
-                return Err(mk_err(
+                return Err(lexer_error(
+                    file,
                     start_line,
                     start_col,
                     format!("unknown character: '{}'", c as char),
                 ));
             }
         };
-        advance(&mut i, &mut line, &mut col);
+        advance_char(bytes, &mut i, &mut line, &mut col);
         tokens.push((token, Span::new(start, i, start_line, start_col)));
     }
 

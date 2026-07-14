@@ -28,27 +28,26 @@ pub fn validate(module: &Module) -> VdlResult<()> {
     all_errors.extend(rules::check_dag(module).into_iter().map(VdlError::from));
     all_errors.extend(rules::check_version_format(module).into_iter().map(VdlError::from));
 
-    if let Some(first_error) = all_errors.into_iter().next() {
-        Err(first_error)
-    } else {
+    if all_errors.is_empty() {
         Ok(())
+    } else if all_errors.len() == 1 {
+        Err(all_errors.into_iter().next().unwrap())
+    } else {
+        let count = all_errors.len();
+        let messages = all_errors
+            .into_iter()
+            .map(|e| e.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        Err(VdlError::ValidationErrors { count, messages })
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parser::ast::{
-        Entity, EntityType, EvidenceBlock, Module, Relationship, RelationshipType,
-        Revelation, Synthesis,
-    };
-    use crate::error::SourceLocation;
-    use std::collections::HashMap;
-    use std::path::PathBuf;
-
-    fn loc() -> SourceLocation {
-        SourceLocation::new(PathBuf::from("test.vdl"), 1, 1)
-    }
+    use crate::parser::ast::{Entity, EntityType, EvidenceBlock, Module, Relationship, RelationshipType, Synthesis};
+    use crate::test_helpers::{test_entity, test_evidence_block, test_location, test_relationship};
 
     fn entity(
         id: &str,
@@ -57,39 +56,18 @@ mod tests {
         relationships: Vec<Relationship>,
         evidence: Option<EvidenceBlock>,
     ) -> Entity {
-        Entity {
-            id: id.to_string(),
-            entity_type,
-            version: version.to_string(),
-            title: id.to_string(),
-            description: format!("Description of {}", id),
-            properties: HashMap::new(),
-            relationships,
-            evidence,
-            annotations: Vec::new(),
-            source_location: loc(),
-        }
+        let mut e = test_entity(id, entity_type, version);
+        e.relationships = relationships;
+        e.evidence = evidence;
+        e
     }
 
     fn rel(rel_type: RelationshipType, target_id: &str) -> Relationship {
-        Relationship {
-            rel_type,
-            target_id: target_id.to_string(),
-            source_location: loc(),
-        }
+        test_relationship(rel_type, target_id)
     }
 
     fn valid_evidence() -> EvidenceBlock {
-        EvidenceBlock {
-            revelations: vec![Revelation {
-                source: "Source".to_string(),
-                text: "Text".to_string(),
-                translator: None,
-                source_location: loc(),
-            }],
-            syntheses: Vec::new(),
-            analogies: Vec::new(),
-        }
+        test_evidence_block()
     }
 
     #[test]
@@ -218,7 +196,7 @@ mod tests {
                     syntheses: vec![Synthesis {
                         sources: vec!["one".to_string()],
                         argument: "arg".to_string(),
-                        source_location: loc(),
+                        source_location: test_location(),
                     }],
                     analogies: Vec::new(),
                 }),
@@ -272,5 +250,26 @@ mod tests {
         };
         let result = validate(&module);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn multiple_validation_errors_are_collected() {
+        // Concept without evidence AND with an invalid version triggers two
+        // independent validation errors.
+        let module = Module {
+            entities: vec![entity(
+                "e1",
+                EntityType::Concept,
+                "not-a-version",
+                vec![],
+                None,
+            )],
+        };
+        let result = validate(&module);
+        assert!(result.is_err());
+        assert!(
+            matches!(result.unwrap_err(), VdlError::ValidationErrors { .. }),
+            "expected multiple validation errors to be aggregated"
+        );
     }
 }

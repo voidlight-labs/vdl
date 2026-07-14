@@ -10,11 +10,11 @@ use std::collections::HashSet;
 #[derive(Debug, Clone)]
 pub struct KnowledgeGraph {
     /// All entities in the graph, keyed by ID.
-    pub nodes: IndexMap<String, Entity>,
+    pub(crate) nodes: IndexMap<String, Entity>,
     /// All edges in the graph.
-    pub edges: Vec<Edge>,
+    pub(crate) edges: Vec<Edge>,
     /// Adjacency list: from_id -> [(to_id, relationship_type)].
-    pub adjacency: IndexMap<String, Vec<(String, RelationshipType)>>,
+    pub(crate) adjacency: IndexMap<String, Vec<(String, RelationshipType)>>,
 }
 
 impl KnowledgeGraph {
@@ -116,6 +116,23 @@ impl KnowledgeGraph {
         }
 
         Ok(())
+    }
+}
+
+impl KnowledgeGraph {
+    /// Return a reference to all entities in the graph, keyed by ID.
+    pub fn nodes(&self) -> &IndexMap<String, Entity> {
+        &self.nodes
+    }
+
+    /// Return a reference to all edges in the graph.
+    pub fn edges(&self) -> &[Edge] {
+        &self.edges
+    }
+
+    /// Return a reference to the forward adjacency list.
+    pub fn adjacency(&self) -> &IndexMap<String, Vec<(String, RelationshipType)>> {
+        &self.adjacency
     }
 }
 

@@ -173,31 +173,17 @@ fn render_analogies(output: &mut String, evidence: &EvidenceBlock) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::error::SourceLocation;
     use crate::parser::ast::{
         Analogy, Annotation, Entity, EntityType, EvidenceBlock, Relationship, RelationshipType,
         Revelation, Synthesis,
     };
-    use indexmap::IndexMap;
-    use std::collections::HashMap;
-
-    fn dummy_loc() -> SourceLocation {
-        SourceLocation::new(std::path::PathBuf::from("test.vdl"), 1, 1)
-    }
+    use crate::test_helpers::{test_entity, test_location};
 
     fn make_entity(id: &str, entity_type: EntityType, title: &str) -> Entity {
-        Entity {
-            id: id.to_string(),
-            entity_type,
-            version: "1.0".to_string(),
-            title: title.to_string(),
-            description: "A test description.".to_string(),
-            properties: HashMap::new(),
-            relationships: Vec::new(),
-            evidence: None,
-            annotations: Vec::new(),
-            source_location: dummy_loc(),
-        }
+        let mut e = test_entity(id, entity_type, "1.0");
+        e.title = title.to_string();
+        e.description = "A test description.".to_string();
+        e
     }
 
     #[test]
@@ -220,28 +206,28 @@ mod tests {
             Annotation {
                 name: "author".to_string(),
                 value: "Khayren".to_string(),
-                source_location: dummy_loc(),
+                source_location: test_location(),
             },
             Annotation {
                 name: "created".to_string(),
                 value: "2024-03-15".to_string(),
-                source_location: dummy_loc(),
+                source_location: test_location(),
             },
             Annotation {
                 name: "status".to_string(),
                 value: "canonical".to_string(),
-                source_location: dummy_loc(),
+                source_location: test_location(),
             },
             Annotation {
                 name: "pillar".to_string(),
                 value: "soul".to_string(),
-                source_location: dummy_loc(),
+                source_location: test_location(),
             },
         ];
         entity.relationships = vec![Relationship {
             rel_type: RelationshipType::DerivesFrom,
             target_id: "voidlight_constitution".to_string(),
-            source_location: dummy_loc(),
+            source_location: test_location(),
         }];
 
         let md = generate_entity(&entity).unwrap();
@@ -280,7 +266,7 @@ mod tests {
                 source: "Quran 2:30".to_string(),
                 text: "And when your Lord said to the angels...".to_string(),
                 translator: None,
-                source_location: dummy_loc(),
+                source_location: test_location(),
             }],
             syntheses: vec![],
             analogies: vec![],
@@ -303,7 +289,7 @@ mod tests {
             syntheses: vec![Synthesis {
                 sources: vec!["Quran 51:56".to_string(), "Quran 13:28".to_string()],
                 argument: "The Quranic command that humans were created...".to_string(),
-                source_location: dummy_loc(),
+                source_location: test_location(),
             }],
             analogies: vec![],
         });
@@ -328,7 +314,7 @@ mod tests {
             analogies: vec![Analogy {
                 domain: "Architecture".to_string(),
                 mapping: "A building's foundation must be poured...".to_string(),
-                source_location: dummy_loc(),
+                source_location: test_location(),
             }],
         });
 
@@ -349,17 +335,17 @@ mod tests {
                 source: "Source A".to_string(),
                 text: "Text A".to_string(),
                 translator: None,
-                source_location: dummy_loc(),
+                source_location: test_location(),
             }],
             syntheses: vec![Synthesis {
                 sources: vec!["Source B".to_string()],
                 argument: "Argument B".to_string(),
-                source_location: dummy_loc(),
+                source_location: test_location(),
             }],
             analogies: vec![Analogy {
                 domain: "Domain C".to_string(),
                 mapping: "Mapping C".to_string(),
-                source_location: dummy_loc(),
+                source_location: test_location(),
             }],
         });
 

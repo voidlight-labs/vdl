@@ -19,13 +19,27 @@ pub enum GraphError {
 ///
 /// Provides `ancestors`, `descendants`, and `related` queries.
 pub struct GraphQuery<'a> {
-    pub graph: &'a super::KnowledgeGraph,
+    graph: &'a super::KnowledgeGraph,
+    reverse_adj: HashMap<&'a str, Vec<&'a str>>,
 }
 
 impl<'a> GraphQuery<'a> {
     /// Create a new query bound to the given graph.
+    ///
+    /// Precomputes the reverse adjacency view used by `descendants`.
     pub fn new(graph: &'a super::KnowledgeGraph) -> Self {
-        Self { graph }
+        let mut reverse_adj: HashMap<&'a str, Vec<&'a str>> = HashMap::new();
+        for edge in &graph.edges {
+            if edge.rel_type == RelationshipType::Requires
+                || edge.rel_type == RelationshipType::DerivesFrom
+            {
+                reverse_adj.entry(&edge.to).or_default().push(&edge.from);
+            }
+        }
+        Self {
+            graph,
+            reverse_adj,
+        }
     }
 
     /// Find all ancestors of an entity by following outgoing `requires` and
@@ -77,7 +91,7 @@ impl<'a> GraphQuery<'a> {
     /// A descendant is any entity that directly or indirectly depends on the
     /// given entity through `requires` or `derives_from` relationships.
     ///
-    /// Uses cycle-safe BFS.
+    /// Uses cycle-safe BFS over the precomputed reverse adjacency view.
     ///
     /// # Errors
     ///
@@ -88,16 +102,6 @@ impl<'a> GraphQuery<'a> {
             .get(entity_id)
             .ok_or_else(|| GraphError::EntityNotFound(entity_id.to_string()))?;
 
-        // Build a reverse adjacency view for the two relevant edge types.
-        let mut reverse: HashMap<&str, Vec<&str>> = HashMap::new();
-        for edge in &self.graph.edges {
-            if edge.rel_type == RelationshipType::Requires
-                || edge.rel_type == RelationshipType::DerivesFrom
-            {
-                reverse.entry(&edge.to).or_default().push(&edge.from);
-            }
-        }
-
         let mut visited = HashSet::new();
         visited.insert(entity_id.to_string());
         let mut queue = VecDeque::new();
@@ -105,7 +109,7 @@ impl<'a> GraphQuery<'a> {
         let mut result = Vec::new();
 
         while let Some(current_id) = queue.pop_front() {
-            if let Some(parents) = reverse.get(current_id.as_str()) {
+            if let Some(parents) = self.reverse_adj.get(current_id.as_str()) {
                 for &from_id in parents {
                     if visited.insert(from_id.to_string()) {
                         if let Some(entity) = self.graph.nodes.get(from_id) {

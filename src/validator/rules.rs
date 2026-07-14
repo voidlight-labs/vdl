@@ -1,9 +1,11 @@
-use crate::parser::ast::{
-    EntityType, Module, RelationshipType,
-};
+use crate::parser::ast::{EntityType, Module, RelationshipType};
 use crate::validator::error::ValidationError;
 use regex::Regex;
 use std::collections::{HashMap, HashSet};
+use std::sync::LazyLock;
+
+static VERSION_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\d+\.\d+$").expect("version regex should be valid"));
 
 /// Individual validation rule implementations.
 ///
@@ -326,10 +328,9 @@ pub fn check_dag(module: &Module) -> Vec<ValidationError> {
 /// 6. Version format validation.
 pub fn check_version_format(module: &Module) -> Vec<ValidationError> {
     let mut errors = Vec::new();
-    let re = Regex::new(r"^\d+\.\d+$").unwrap();
 
     for entity in &module.entities {
-        if !re.is_match(&entity.version) {
+        if !VERSION_REGEX.is_match(&entity.version) {
             errors.push(ValidationError::InvalidVersion {
                 location: entity.source_location.clone(),
                 message: format!(
@@ -346,17 +347,8 @@ pub fn check_version_format(module: &Module) -> Vec<ValidationError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::error::SourceLocation;
-    use crate::parser::ast::{
-        Analogy, Annotation, Entity, EntityType, EvidenceBlock, Module, Relationship,
-        RelationshipType, Revelation, Synthesis,
-    };
-    use std::collections::HashMap;
-    use std::path::PathBuf;
-
-    fn loc() -> SourceLocation {
-        SourceLocation::new(PathBuf::from("test.vdl"), 1, 1)
-    }
+    use crate::parser::ast::{Entity, EntityType, EvidenceBlock, Module, Relationship, RelationshipType, Synthesis};
+    use crate::test_helpers::{test_entity, test_evidence_block, test_location, test_relationship};
 
     fn entity_with(
         id: &str,
@@ -365,39 +357,18 @@ mod tests {
         relationships: Vec<Relationship>,
         evidence: Option<EvidenceBlock>,
     ) -> Entity {
-        Entity {
-            id: id.to_string(),
-            entity_type,
-            version: version.to_string(),
-            title: id.to_string(),
-            description: format!("Description of {}", id),
-            properties: HashMap::new(),
-            relationships,
-            evidence,
-            annotations: Vec::new(),
-            source_location: loc(),
-        }
+        let mut e = test_entity(id, entity_type, version);
+        e.relationships = relationships;
+        e.evidence = evidence;
+        e
     }
 
     fn rel(rel_type: RelationshipType, target_id: &str) -> Relationship {
-        Relationship {
-            rel_type,
-            target_id: target_id.to_string(),
-            source_location: loc(),
-        }
+        test_relationship(rel_type, target_id)
     }
 
     fn valid_evidence() -> EvidenceBlock {
-        EvidenceBlock {
-            revelations: vec![Revelation {
-                source: "Source".to_string(),
-                text: "Text".to_string(),
-                translator: None,
-                source_location: loc(),
-            }],
-            syntheses: Vec::new(),
-            analogies: Vec::new(),
-        }
+        test_evidence_block()
     }
 
     #[test]
@@ -558,7 +529,7 @@ mod tests {
                     syntheses: vec![Synthesis {
                         sources: vec!["one".to_string()],
                         argument: "arg".to_string(),
-                        source_location: loc(),
+                        source_location: test_location(),
                     }],
                     analogies: Vec::new(),
                 }),

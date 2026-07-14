@@ -7,7 +7,7 @@ use clap::{Parser, Subcommand};
 #[derive(Parser)]
 #[command(name = "vdl")]
 #[command(about = "Voidlight Definition Language compiler")]
-#[command(version = "0.1.0")]
+#[command(version = env!("CARGO_PKG_VERSION"))]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,
@@ -33,6 +33,9 @@ pub enum Commands {
     Graph {
         /// Entity ID to center the subgraph on.
         entity_id: String,
+        /// Path to a .vdl file or directory containing .vdl files.
+        #[arg(default_value = ".")]
+        path: String,
     },
 
     /// Compare two versions of the same entity.
@@ -43,11 +46,17 @@ pub enum Commands {
         v1: String,
         /// Second version to compare.
         v2: String,
+        /// Path to a .vdl file or directory containing .vdl files.
+        #[arg(default_value = ".")]
+        path: String,
     },
 
     /// Search entity IDs and titles using a regex pattern.
     Search {
         /// Search query (regex).
         query: String,
+        /// Path to a .vdl file or directory containing .vdl files.
+        #[arg(default_value = ".")]
+        path: String,
     },
 }

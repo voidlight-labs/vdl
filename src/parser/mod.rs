@@ -1,5 +1,4 @@
 pub mod ast;
-pub mod error;
 
 use crate::error::{SourceLocation, VdlError, VdlResult};
 use crate::lexer::token::Token;

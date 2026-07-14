@@ -2,6 +2,22 @@
 
 > **Voidlight Definition Language** — A standalone Rust compiler that transforms declarative knowledge definitions into JSON Graph, Markdown, Search Index, and Graphviz DOT output.
 
+## Quick Start
+
+```bash
+# 1. Install
+git clone https://github.com/voidlight-labs/vdl
+cd vdl
+cargo install --path .
+
+# 2. Validate a VDL file
+vdl validate tests/fixtures/seven_laws.vdl
+
+# 3. Compile to all output formats
+vdl compile tests/fixtures/seven_laws.vdl
+# Output appears in ./output/
+```
+
 ## Overview
 
 VDL is a domain-specific language for describing, structuring, and interconnecting knowledge systems. The compiler follows a strict 5-stage pipeline:
@@ -12,25 +28,51 @@ VDL Source (.vdl) → Lexer → Parser → Validator → Graph Builder → Code 
                                               JSON | Markdown | Search | DOT
 ```
 
-## Build Instructions
+## Installation
 
 ### Prerequisites
 
-- [Rust](https://rustup.rs/) (edition 2021 or later)
+- [Rust](https://rustup.rs/) toolchain (edition 2021 or later)
 - `cargo` package manager
 
-### Building
+### Option 1: Install globally with `cargo install` (recommended)
+
+This is the easiest way to use `vdl` from anywhere on your system.
 
 ```bash
 # Clone the repository
 git clone https://github.com/voidlight-labs/vdl
 cd vdl
 
+# Install the release binary to ~/.cargo/bin
+cargo install --path .
+
+# Now you can run `vdl` from any directory
+vdl --help
+```
+
+> **Note:** Make sure `~/.cargo/bin` is in your `PATH`. If you installed Rust via `rustup`, this is usually already configured.
+
+### Option 2: Run without installing
+
+If you don't want to install globally, you can build and run directly:
+
+```bash
 # Build in release mode
 cargo build --release
 
-# The binary will be at target/release/vdl
+# Run the binary
 ./target/release/vdl --help
+```
+
+### Option 3: Copy the binary to a system directory
+
+For system-wide access (requires `sudo` on Linux/macOS):
+
+```bash
+cargo build --release
+sudo cp target/release/vdl /usr/local/bin/
+vdl --help
 ```
 
 ### Running Tests
@@ -50,7 +92,7 @@ cargo insta review
 
 ### Entity Declaration
 
-```vdll
+```vdl
 <type> "<identifier>" {
     version "<major.minor>"
     title "<human-readable name>"
@@ -100,7 +142,7 @@ cargo insta review
 
 ### Annotations
 
-```vdll
+```vdl
 @author("Name")
 @created("YYYY-MM-DD")
 @reviewed("YYYY-MM-DD")
@@ -113,6 +155,8 @@ cargo insta review
 `major.minor` — e.g., `"5.0"`, `"1.10"`. Must match `^\d+\.\d+$`.
 
 ## CLI Usage
+
+> All commands that take a `<path>` argument accept either a single `.vdl` file or a directory. Directories are scanned recursively for `.vdl` files.
 
 ### `vdl validate <file_or_dir>`
 
@@ -128,22 +172,23 @@ vdl validate tests/fixtures/
 
 # Validate an invalid file (returns exit code 1)
 vdl validate tests/fixtures/invalid_cycle.vdl
-# → [test.vdl:5:5] Validation error: Cycle detected: cycle.a → cycle.c → cycle.b → cycle.a
+# → Validation failed with 1 error(s):
+# → [tests/fixtures/invalid_cycle.vdl:5:5] Validation error: Cycle detected: ...
 ```
 
 ### `vdl compile <file_or_dir>`
 
-Run the full pipeline and generate all output targets.
+Run the full pipeline and generate all output targets in the `output/` directory.
 
 ```bash
 vdl compile tests/fixtures/seven_laws.vdl
 # → Found 1 VDL file(s) to compile.
 # → ✓ Validation and graph construction complete.
 # → Generating output targets…
-# →   output/graph.json
-# →   output/soul/
-# →   output/search.json
-# →   output/graph.dot
+# →   → output/graph.json
+# →   → output/soul/
+# →   → output/search.json
+# →   → output/graph.dot
 # → ✓ Compilation complete.
 ```
 
@@ -158,16 +203,20 @@ output/
 └── graph.dot       # Graphviz DOT visualization
 ```
 
-### `vdl graph <entity_id>`
+### `vdl graph <entity_id> [path]`
 
-Export a subgraph centered on an entity to DOT format (stdout).
+Export a 1-hop subgraph centered on an entity to DOT format (stdout).
 
 ```bash
+# Use .vdl files in the current directory (default)
 vdl graph soul.law.i
+
+# Or specify a file/directory
+vdl graph soul.law.i tests/fixtures/
 # → digraph subgraph { ... }
 ```
 
-### `vdl diff <id> <v1> <v2>`
+### `vdl diff <id> <v1> <v2> [path]`
 
 Compare two entities. In v0.1, searches for entities whose ID contains the query substring and diffs the first two matches.
 
@@ -176,7 +225,7 @@ vdl diff soul law
 # → Diff: soul.law.i vs soul.law.ii
 ```
 
-### `vdl search <query>`
+### `vdl search <query> [path]`
 
 Search entity IDs and titles with a case-insensitive regex.
 
@@ -234,8 +283,7 @@ vdl/
 │   │   └── token.rs     # Token enum
 │   ├── parser/
 │   │   ├── mod.rs       # parse() with chumsky
-│   │   ├── ast.rs       # AST types (Entity, Relationship, Evidence, …)
-│   │   └── error.rs     # ParseError
+│   │   └── ast.rs       # AST types (Entity, Relationship, Evidence, …)
 │   ├── validator/
 │   │   ├── mod.rs       # validate() orchestration
 │   │   ├── rules.rs     # 6 rule implementations

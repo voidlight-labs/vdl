@@ -145,16 +145,11 @@ fn build_tags(entity: &Entity) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::error::SourceLocation;
     use crate::parser::ast::{
         Analogy, Annotation, Entity, EntityType, EvidenceBlock, Revelation, Synthesis,
     };
+    use crate::test_helpers::test_location;
     use std::collections::HashMap;
-    use std::path::PathBuf;
-
-    fn dummy_location() -> SourceLocation {
-        SourceLocation::new(PathBuf::from("test.vdl"), 1, 1)
-    }
 
     fn create_test_entity() -> Entity {
         Entity {
@@ -170,37 +165,37 @@ mod tests {
                     source: "Quran 2:30".to_string(),
                     text: "And when your Lord said to the angels...".to_string(),
                     translator: Some("Sahih International".to_string()),
-                    source_location: dummy_location(),
+                    source_location: test_location(),
                 }],
                 syntheses: vec![Synthesis {
                     sources: vec!["Ibn Kathir".to_string(), "Al-Tabari".to_string()],
                     argument: "The verse establishes divine delegation.".to_string(),
-                    source_location: dummy_location(),
+                    source_location: test_location(),
                 }],
                 analogies: vec![Analogy {
                     domain: "Governance".to_string(),
                     mapping: "A steward is not the owner.".to_string(),
-                    source_location: dummy_location(),
+                    source_location: test_location(),
                 }],
             }),
             annotations: vec![
                 Annotation {
                     name: "author".to_string(),
                     value: "Khayren".to_string(),
-                    source_location: dummy_location(),
+                    source_location: test_location(),
                 },
                 Annotation {
                     name: "pillar".to_string(),
                     value: "soul".to_string(),
-                    source_location: dummy_location(),
+                    source_location: test_location(),
                 },
                 Annotation {
                     name: "status".to_string(),
                     value: "canonical".to_string(),
-                    source_location: dummy_location(),
+                    source_location: test_location(),
                 },
             ],
-            source_location: dummy_location(),
+            source_location: test_location(),
         }
     }
 
@@ -281,7 +276,7 @@ mod tests {
         entity.annotations.push(Annotation {
             name: "author".to_string(),
             value: "Khayren".to_string(),
-            source_location: dummy_location(),
+            source_location: test_location(),
         });
         graph.nodes.insert(entity.id.clone(), entity);
 

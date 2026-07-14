@@ -36,6 +36,9 @@ pub mod validator;
 // CLI is primarily for the binary, but exposed for library consumers who want it.
 pub mod cli;
 
+#[cfg(test)]
+pub mod test_helpers;
+
 pub use error::{SourceLocation, VdlError, VdlResult};
 pub use parser::ast::{
     Annotation, Analogy, Entity, EntityType, EvidenceBlock, Module, Relationship, RelationshipType,
