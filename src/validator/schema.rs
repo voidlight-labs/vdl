@@ -147,6 +147,26 @@ fn check_type_declarations(doc: &SchemaDoc) -> Vec<ValidationError> {
                 ),
             ));
         }
+
+        // V15: the renderer emits a single body, so an ambiguous declaration is
+        // rejected even when the type has no instances.
+        let bodies: Vec<&str> = type_decl
+            .fields
+            .iter()
+            .filter(|f| matches!(f.kind, FieldKind::Body))
+            .map(|f| f.name.as_str())
+            .collect();
+        if bodies.len() > 1 {
+            errors.push(violation(
+                &type_decl.source_location,
+                format!(
+                    "type '{}' declares {} body fields ({}); at most one is allowed",
+                    type_decl.name,
+                    bodies.len(),
+                    bodies.join(", ")
+                ),
+            ));
+        }
     }
 
     errors
@@ -641,6 +661,22 @@ entity "A" "a" {
 }
 "#;
         assert_single(src, "references undeclared type 'Typo'");
+    }
+
+    // -- V15 --------------------------------------------------------------
+
+    #[test]
+    fn v15_multiple_body_fields_rejected() {
+        let src = r#"
+schema "s" {
+    type "A" {
+        field "label" text heading
+        field "first" body
+        field "second" body
+    }
+}
+"#;
+        assert_single(src, "declares 2 body fields (first, second)");
     }
 
     // -- V14 --------------------------------------------------------------
