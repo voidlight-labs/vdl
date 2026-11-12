@@ -30,6 +30,7 @@ pub mod codegen;
 pub mod error;
 pub mod graph;
 pub mod lexer;
+pub mod model;
 pub mod parser;
 pub mod validator;
 
@@ -40,6 +41,9 @@ pub mod cli;
 pub mod test_helpers;
 
 pub use error::{SourceLocation, VdlError, VdlResult};
+pub use model::{
+    FieldDecl, FieldKind, FieldValue, Instance, Schema, SchemaDoc, TypeDecl, Value,
+};
 pub use parser::ast::{
     Annotation, Analogy, Entity, EntityType, EvidenceBlock, Module, Relationship, RelationshipType,
     Revelation, Synthesis,
