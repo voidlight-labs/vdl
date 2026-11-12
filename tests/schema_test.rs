@@ -61,8 +61,8 @@ fn both_runbooks_compose_to_complete_markdown() {
     for (root, label) in [("core-guide", "Core Guide"), ("ops-guide", "Ops Guide")] {
         let md = compose(&doc, root).unwrap_or_else(|e| panic!("{}: {:?}", root, e));
         assert!(md.starts_with("---\n"), "{}", md);
-        assert!(md.contains(&format!("id: {}", root)), "{}", md);
-        assert!(md.contains("type: Runbook"), "{}", md);
+        assert!(md.contains(&format!("id: \"{}\"", root)), "{}", md);
+        assert!(md.contains("type: \"Runbook\""), "{}", md);
         assert!(md.contains(&format!("\n# {}\n", label)), "{}", md);
         assert!(md.contains("## Introduction"), "{}", md);
         assert!(md.contains("## Rules"), "{}", md);
@@ -96,7 +96,7 @@ fn ordinary_reference_excludes_target_body() {
     let doc = load("runbooks.vdl");
     let core = compose(&doc, "core-guide").unwrap();
 
-    assert!(core.contains("  - appendix"), "{}", core);
+    assert!(core.contains("  - \"appendix\""), "{}", core);
     assert!(
         !core.contains("Appendix body. This text must never be inlined by an ordinary reference."),
         "{}",
@@ -198,7 +198,7 @@ fn renaming_types_needs_no_rust_change() {
     assert!(diag(&doc).is_empty(), "{:?}", diag(&doc));
 
     let md = compose(&doc, "core-guide").unwrap();
-    assert!(md.contains("type: Manual"), "{}", md);
+    assert!(md.contains("type: \"Manual\""), "{}", md);
     assert!(md.contains("\n# Core Guide\n"), "{}", md);
     assert!(md.contains("## Introduction"), "{}", md);
     assert!(md.contains("caption: \"Core Guide\""), "{}", md);
@@ -262,4 +262,45 @@ fn entity_first_schema_file_is_rejected() {
         }
         other => panic!("expected parser error, got {:?}", other),
     }
+}
+
+// ---------------------------------------------------------------------------
+// UTF-8 in ordinary quoted strings
+// ---------------------------------------------------------------------------
+
+#[test]
+fn non_ascii_title_reaches_heading_and_frontmatter() {
+    let src = r#"
+schema "naskah" {
+    type "Naskah" {
+        field "label" text heading
+        field "bab" ref "Bab" compose
+    }
+    type "Bab" {
+        field "label" text heading
+        field "content" body
+    }
+}
+
+entity "Bab" "satu" {
+    field "label" "Bab Satu — “Pembuka”"
+    field "content" """Isi bab."""
+}
+
+entity "Naskah" "utama" {
+    field "label" "Naskah — “Kutip” ✓"
+    field "bab" [ "satu" ]
+}
+"#;
+    let doc = parse(src, Path::new("naskah.vdl"));
+    assert!(diag(&doc).is_empty(), "{:?}", diag(&doc));
+
+    let md = compose(&doc, "utama").unwrap();
+    assert!(md.contains("# Naskah — “Kutip” ✓"), "{}", md);
+    assert!(
+        md.contains("label: \"Naskah — “Kutip” ✓\""),
+        "{}",
+        md
+    );
+    assert!(md.contains("## Bab Satu — “Pembuka”"), "{}", md);
 }
