@@ -114,6 +114,56 @@ fn read_file_to_string(path: &Path) -> VdlResult<String> {
     })
 }
 
+/// Returns `true` when `out` resolves to the same file as `input`.
+///
+/// Canonical paths cover relative segments, `..`, and symlinks. On Unix the
+/// device/inode pair also catches hard links; on other platforms a hard link is
+/// not detected because the standard library exposes no file identity there.
+fn output_aliases_input(input: &Path, out: &Path) -> std::io::Result<bool> {
+    let input_meta = fs::metadata(input)?;
+    let input_canon = fs::canonicalize(input)?;
+
+    // Existing target: compare identity directly (hard links included on Unix).
+    if let Ok(out_meta) = fs::metadata(out) {
+        if same_file(&input_meta, &out_meta) {
+            return Ok(true);
+        }
+    }
+
+    // Nonexistent target: canonicalize the parent so `sub/../x.vdl` still matches.
+    let out_canon = match fs::canonicalize(out) {
+        Ok(path) => path,
+        Err(_) => {
+            let parent = out
+                .parent()
+                .filter(|p| !p.as_os_str().is_empty())
+                .unwrap_or_else(|| Path::new("."));
+            let Some(name) = out.file_name() else {
+                return Ok(false);
+            };
+            match fs::canonicalize(parent) {
+                Ok(parent) => parent.join(name),
+                // The target cannot be the input when its own directory does not
+                // resolve; let the write fail with the ordinary IO message.
+                Err(_) => return Ok(false),
+            }
+        }
+    };
+
+    Ok(out_canon == input_canon)
+}
+
+#[cfg(unix)]
+fn same_file(a: &fs::Metadata, b: &fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    a.dev() == b.dev() && a.ino() == b.ino()
+}
+
+#[cfg(not(unix))]
+fn same_file(_a: &fs::Metadata, _b: &fs::Metadata) -> bool {
+    false
+}
+
 /// Parse and validate a set of `.vdl` files, returning the merged module.
 fn parse_and_validate(files: &[PathBuf]) -> VdlResult<Module> {
     let mut all_entities = Vec::new();
@@ -222,6 +272,21 @@ fn cmd_compose(path: &str, root: &str, out: Option<&Path>) -> Result<()> {
             ))
         }
     };
+
+    if let Some(out_path) = out {
+        if output_aliases_input(&file, out_path).map_err(|e| {
+            miette!(
+                "Failed to compare output path {} with input: {}",
+                out_path.display(),
+                e
+            )
+        })? {
+            return Err(miette!(
+                "refusing to write output over the input file '{}'",
+                file.display()
+            ));
+        }
+    }
 
     let source = wrap(read_file_to_string(&file))?;
     let tokens = wrap(lexer::lex(&source, &file))?;

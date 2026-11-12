@@ -202,3 +202,130 @@ fn test_compose_rejects_legacy_document() {
         stderr
     );
 }
+
+// ---------------------------------------------------------------------------
+// compose --out must never overwrite its own input
+// ---------------------------------------------------------------------------
+
+fn copy_fixture_to(dir: &Path) -> std::path::PathBuf {
+    let input = dir.join("runbooks.vdl");
+    let src = fs::read_to_string("tests/fixtures/schema/runbooks.vdl").expect("fixture readable");
+    fs::write(&input, src).expect("fixture copy written");
+    input
+}
+
+#[test]
+fn test_compose_rejects_output_over_input() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let input = copy_fixture_to(dir.path());
+    let before = fs::read(&input).expect("input readable");
+
+    let output = run_vdl([
+        "compose",
+        input.to_str().unwrap(),
+        "--root",
+        "core-guide",
+        "--out",
+        input.to_str().unwrap(),
+    ]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(!output.status.success(), "expected a nonzero exit status");
+    assert!(
+        stderr.contains("refusing to write output over the input"),
+        "stderr: {}",
+        stderr
+    );
+    assert_eq!(
+        fs::read(&input).expect("input still readable"),
+        before,
+        "input bytes must be untouched"
+    );
+}
+
+#[test]
+fn test_compose_rejects_relative_alias_of_input() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let input = copy_fixture_to(dir.path());
+    let before = fs::read(&input).expect("input readable");
+
+    // Same file reached through `.` and `..`, i.e. not the literal same string.
+    let alias = dir.path().join("sub").join("..").join("runbooks.vdl");
+    fs::create_dir_all(dir.path().join("sub")).unwrap();
+
+    let output = run_vdl([
+        "compose",
+        input.to_str().unwrap(),
+        "--root",
+        "core-guide",
+        "--out",
+        alias.to_str().unwrap(),
+    ]);
+
+    assert!(!output.status.success(), "expected a nonzero exit status");
+    assert_eq!(fs::read(&input).expect("input still readable"), before);
+}
+
+#[test]
+fn test_compose_writes_distinct_markdown_path() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let input = copy_fixture_to(dir.path());
+    let out = dir.path().join("out.md");
+
+    let output = run_vdl([
+        "compose",
+        input.to_str().unwrap(),
+        "--root",
+        "core-guide",
+        "--out",
+        out.to_str().unwrap(),
+    ]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(output.status.success(), "stderr: {}", stderr);
+    assert!(out.exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn test_compose_rejects_symlink_alias_of_input() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let input = copy_fixture_to(dir.path());
+    let link = dir.path().join("alias.vdl");
+    std::os::unix::fs::symlink(&input, &link).expect("symlink created");
+    let before = fs::read(&input).expect("input readable");
+
+    let output = run_vdl([
+        "compose",
+        input.to_str().unwrap(),
+        "--root",
+        "core-guide",
+        "--out",
+        link.to_str().unwrap(),
+    ]);
+
+    assert!(!output.status.success(), "expected a nonzero exit status");
+    assert_eq!(fs::read(&input).expect("input still readable"), before);
+}
+
+#[cfg(unix)]
+#[test]
+fn test_compose_rejects_hard_link_alias_of_input() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let input = copy_fixture_to(dir.path());
+    let link = dir.path().join("hardlink.vdl");
+    fs::hard_link(&input, &link).expect("hard link created");
+    let before = fs::read(&input).expect("input readable");
+
+    let output = run_vdl([
+        "compose",
+        input.to_str().unwrap(),
+        "--root",
+        "core-guide",
+        "--out",
+        link.to_str().unwrap(),
+    ]);
+
+    assert!(!output.status.success(), "expected a nonzero exit status");
+    assert_eq!(fs::read(&input).expect("input still readable"), before);
+}
