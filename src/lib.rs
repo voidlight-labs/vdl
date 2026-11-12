@@ -44,6 +44,7 @@ pub use error::{SourceLocation, VdlError, VdlResult};
 pub use model::{
     FieldDecl, FieldKind, FieldValue, Instance, Schema, SchemaDoc, TypeDecl, Value,
 };
+pub use parser::{parse_document, Document};
 pub use parser::ast::{
     Annotation, Analogy, Entity, EntityType, EvidenceBlock, Module, Relationship, RelationshipType,
     Revelation, Synthesis,

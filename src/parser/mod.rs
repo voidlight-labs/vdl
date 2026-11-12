@@ -1,4 +1,5 @@
 pub mod ast;
+pub mod schema;
 
 use crate::error::{SourceLocation, VdlError, VdlResult};
 use crate::lexer::token::Token;
@@ -50,7 +51,7 @@ fn byte_offset_to_line_col(source: &str, offset: usize) -> (usize, usize) {
 
 /// Build a [`SourceLocation`] from a span, falling back to computing line/col
 /// from the source text when chumsky's merged spans have lost them.
-fn span_to_location(span: Span, source: &str, file: &Path) -> SourceLocation {
+pub(crate) fn span_to_location(span: Span, source: &str, file: &Path) -> SourceLocation {
     let (line, col) = if span.line > 0 {
         (span.line, span.column)
     } else {
@@ -348,6 +349,44 @@ pub fn parse(_tokens: &[(Token, Span)], _source: &str, file: &Path) -> VdlResult
                 message: first.to_string(),
             })
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Document dispatch
+// ---------------------------------------------------------------------------
+
+/// Either form of VDL source document.
+///
+/// The legacy form is the v0.1 entity model (fixed entity types, evidence
+/// blocks). The schema form is a self-describing document that declares its
+/// own types. Dispatch is decided by the first non-annotation token, so a file
+/// never has to declare its form.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Document {
+    Legacy(Module),
+    Schema(crate::model::SchemaDoc),
+}
+
+/// Parse VDL source into whichever document form it declares.
+///
+/// `schema` or `entity` as the first non-annotation token selects the schema
+/// form; anything else goes down the legacy path unchanged.
+pub fn parse_document(
+    tokens: &[(Token, Span)],
+    source: &str,
+    file: &Path,
+) -> VdlResult<Document> {
+    let first = tokens
+        .iter()
+        .find(|(token, _)| !matches!(token, Token::Annotation(..)))
+        .map(|(token, _)| token);
+
+    match first {
+        Some(Token::Schema) | Some(Token::Entity) => {
+            schema::parse_schema_document(tokens, source, file).map(Document::Schema)
+        }
+        _ => parse(tokens, source, file).map(Document::Legacy),
     }
 }
 
