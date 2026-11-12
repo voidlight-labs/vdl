@@ -100,13 +100,43 @@ fn read_string_literal(
                 }
             }
             advance_char(bytes, i, line, col);
-        } else {
+        } else if bytes[*i].is_ascii() {
             if bytes[*i] == b'\n' {
                 value.push('\n');
             } else {
                 value.push(bytes[*i] as char);
             }
             advance_char(bytes, i, line, col);
+        } else {
+            // Multi-byte UTF-8 sequence: decode the whole sequence at once.
+            let width = utf8_sequence_len(bytes[*i]).ok_or_else(|| {
+                lexer_error(
+                    file,
+                    *line,
+                    *col,
+                    "invalid UTF-8 sequence in string literal",
+                )
+            })?;
+            if *i + width > len {
+                return Err(lexer_error(
+                    file,
+                    *line,
+                    *col,
+                    "truncated UTF-8 sequence in string literal",
+                ));
+            }
+            let chunk = std::str::from_utf8(&bytes[*i..*i + width]).map_err(|_| {
+                lexer_error(
+                    file,
+                    *line,
+                    *col,
+                    "invalid UTF-8 sequence in string literal",
+                )
+            })?;
+            value.push_str(chunk);
+            for _ in 0..width {
+                advance_char(bytes, i, line, col);
+            }
         }
     }
 
@@ -120,6 +150,17 @@ fn read_string_literal(
     }
 
     Ok((value, Span::new(start, *i, start_line, start_col)))
+}
+
+/// Byte width of a UTF-8 sequence starting with `byte`, or `None` when the
+/// byte cannot start a valid sequence.
+fn utf8_sequence_len(byte: u8) -> Option<usize> {
+    match byte {
+        0xC2..=0xDF => Some(2),
+        0xE0..=0xEF => Some(3),
+        0xF0..=0xF4 => Some(4),
+        _ => None,
+    }
 }
 
 /// Read a raw triple-quoted body literal starting at the current position.
@@ -526,6 +567,15 @@ mod tests {
             lex(src, test_file()),
             Err(VdlError::Lexer { .. })
         ));
+    }
+
+    #[test]
+    fn string_literal_preserves_utf8() {
+        let src = "\"Naskah — “kutip” ✓\"";
+        assert_eq!(
+            tokens(lex(src, test_file())),
+            vec![Token::String("Naskah — “kutip” ✓".to_string())]
+        );
     }
 
     #[test]
