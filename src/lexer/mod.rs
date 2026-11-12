@@ -122,6 +122,91 @@ fn read_string_literal(
     Ok((value, Span::new(start, *i, start_line, start_col)))
 }
 
+/// Read a raw triple-quoted body literal starting at the current position.
+///
+/// Assumes `bytes[*i] == b'"'` and the next two bytes are also `b'"'`.
+///
+/// Documented literal rules applied here:
+/// 1. `\r\n` and lone `\r` are normalized to `\n`.
+/// 2. No escape processing: `\"`, `\\` and friends stay literal.
+/// 3. One newline immediately after the opening `"""` is dropped.
+/// 4. A trailing whitespace-only line before the closing `"""` is dropped.
+///
+/// Indentation dedenting happens later, at parse time, because it depends on
+/// the whole body being known.
+fn read_raw_string_literal(
+    bytes: &[u8],
+    i: &mut usize,
+    line: &mut usize,
+    col: &mut usize,
+    file: &Path,
+) -> VdlResult<(String, Span)> {
+    let start = *i;
+    let start_line = *line;
+    let start_col = *col;
+    let len = bytes.len();
+
+    // consume opening `"""`
+    advance_char(bytes, i, line, col);
+    advance_char(bytes, i, line, col);
+    advance_char(bytes, i, line, col);
+
+    let content_start = *i;
+    let mut content_end = None;
+
+    while *i + 2 < len {
+        if bytes[*i] == b'"' && bytes[*i + 1] == b'"' && bytes[*i + 2] == b'"' {
+            content_end = Some(*i);
+            advance_char(bytes, i, line, col);
+            advance_char(bytes, i, line, col);
+            advance_char(bytes, i, line, col);
+            break;
+        }
+        advance_char(bytes, i, line, col);
+    }
+
+    let content_end = match content_end {
+        Some(end) => end,
+        None => {
+            return Err(lexer_error(
+                file,
+                start_line,
+                start_col,
+                "unterminated raw string literal",
+            ))
+        }
+    };
+
+    // Decode as UTF-8 so non-ASCII text survives intact. Pushing bytes as
+    // chars (as `read_string_literal` does) would mangle multibyte input.
+    let raw = std::str::from_utf8(&bytes[content_start..content_end]).map_err(|_| {
+        lexer_error(
+            file,
+            start_line,
+            start_col,
+            "invalid UTF-8 in raw string literal",
+        )
+    })?;
+
+    // Rule 1: normalize line endings.
+    let normalized = raw.replace("\r\n", "\n").replace('\r', "\n");
+
+    // Rule 3: drop one newline right after the opening delimiter.
+    let mut value = match normalized.strip_prefix('\n') {
+        Some(rest) => rest.to_string(),
+        None => normalized,
+    };
+
+    // Rule 4: drop a trailing whitespace-only line before the closing delimiter.
+    if let Some(last_newline) = value.rfind('\n') {
+        if value[last_newline + 1..].trim().is_empty() {
+            value.truncate(last_newline);
+        }
+    }
+
+    Ok((value, Span::new(start, *i, start_line, start_col)))
+}
+
 /// Tokenize VDL source code into a stream of tokens with span information.
 ///
 /// # Arguments
@@ -193,6 +278,13 @@ pub fn lex(source: &str, file: &Path) -> VdlResult<Vec<(Token, Span)>> {
                     "unterminated block comment",
                 ));
             }
+            continue;
+        }
+
+        // --- Raw body literal: """ ... """ ---
+        if c == b'"' && i + 2 < len && bytes[i + 1] == b'"' && bytes[i + 2] == b'"' {
+            let (s, span) = read_raw_string_literal(bytes, &mut i, &mut line, &mut col, file)?;
+            tokens.push((Token::RawString(s), span));
             continue;
         }
 
@@ -303,6 +395,15 @@ pub fn lex(source: &str, file: &Path) -> VdlResult<Vec<(Token, Span)>> {
                 "argument" => Token::Argument,
                 "domain" => Token::Domain,
                 "mapping" => Token::Mapping,
+                // Schema document keywords
+                "schema" => Token::Schema,
+                "type" => Token::Type,
+                "field" => Token::Field,
+                "ref" => Token::Ref,
+                "compose" => Token::Compose,
+                "body" => Token::Body,
+                "heading" => Token::Heading,
+                "entity" => Token::Entity,
                 // Unknown bare word → lex error
                 _ => {
                     return Err(lexer_error(
@@ -355,6 +456,84 @@ mod tests {
     // Helper: extract only tokens, ignoring spans.
     fn tokens(result: VdlResult<Vec<(Token, Span)>>) -> Vec<Token> {
         result.unwrap().into_iter().map(|(t, _)| t).collect()
+    }
+
+    // -------------------------------------------------------------------------
+    // Schema document tokens
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn lex_schema_keywords() {
+        let src = r#"schema "s" { type "T" { field "f" text ref "T" compose body heading } entity "T" "i" { field "f" "v" } }"#;
+        let toks = tokens(lex(src, test_file()));
+        assert!(toks.contains(&Token::Schema));
+        assert!(toks.contains(&Token::Type));
+        assert_eq!(toks.iter().filter(|t| **t == Token::Field).count(), 2);
+        assert!(toks.contains(&Token::Ref));
+        assert!(toks.contains(&Token::Compose));
+        assert!(toks.contains(&Token::Body));
+        assert!(toks.contains(&Token::Heading));
+        assert!(toks.contains(&Token::Entity));
+    }
+
+    #[test]
+    fn raw_string_is_literal() {
+        let src = "\"\"\"a \" b \\ c\"\"\"";
+        let toks = tokens(lex(src, test_file()));
+        assert_eq!(toks, vec![Token::RawString(r#"a " b \ c"#.to_string())]);
+    }
+
+    #[test]
+    fn raw_string_trims_one_leading_newline() {
+        let src = "\"\"\"\nX\n\"\"\"";
+        assert_eq!(
+            tokens(lex(src, test_file())),
+            vec![Token::RawString("X".to_string())]
+        );
+    }
+
+    #[test]
+    fn raw_string_keeps_interior_blank_lines() {
+        let src = "\"\"\"\nA\n\n\nB\n\"\"\"";
+        assert_eq!(
+            tokens(lex(src, test_file())),
+            vec![Token::RawString("A\n\n\nB".to_string())]
+        );
+    }
+
+    #[test]
+    fn raw_string_keeps_non_ascii() {
+        let src = "\"\"\"tafsir — “kutip”\"\"\"";
+        assert_eq!(
+            tokens(lex(src, test_file())),
+            vec![Token::RawString("tafsir — “kutip”".to_string())]
+        );
+    }
+
+    #[test]
+    fn raw_string_normalizes_crlf() {
+        let src = "\"\"\"\r\nA\r\nB\r\n\"\"\"";
+        assert_eq!(
+            tokens(lex(src, test_file())),
+            vec![Token::RawString("A\nB".to_string())]
+        );
+    }
+
+    #[test]
+    fn raw_string_unterminated_is_error() {
+        let src = "\"\"\"never closed";
+        assert!(matches!(
+            lex(src, test_file()),
+            Err(VdlError::Lexer { .. })
+        ));
+    }
+
+    #[test]
+    fn unknown_bare_word_still_errors() {
+        assert!(matches!(
+            lex("wibble", test_file()),
+            Err(VdlError::Lexer { .. })
+        ));
     }
 
     // -------------------------------------------------------------------------

@@ -50,9 +50,30 @@ pub enum Token {
     Domain,
     Mapping,
 
+    // --- Schema document keywords ---
+    /// Starts a `schema "<name>" { ... }` document block.
+    Schema,
+    /// Declares a type inside a schema block.
+    Type,
+    /// Declares a field inside a type, or supplies a value inside an instance.
+    Field,
+    /// Declares a reference collection field.
+    Ref,
+    /// Marks a reference collection for document composition.
+    Compose,
+    /// Declares a multiline Markdown body field.
+    Body,
+    /// Marks a text field as the type's heading.
+    Heading,
+    /// Starts an `entity "<Type>" "<id>" { ... }` instance declaration.
+    Entity,
+
     // --- Literals ---
     /// A double-quoted string literal. Supports multiline and `\"` / `\\` escapes.
     String(String),
+    /// A raw triple-quoted body literal. No escape processing; line endings are
+    /// normalized to LF and the surrounding blank lines are trimmed.
+    RawString(String),
 
     // --- Annotations ---
     /// An annotation token: `@name("value")`.
@@ -106,7 +127,16 @@ impl std::fmt::Display for Token {
             Token::Argument => write!(f, "argument"),
             Token::Domain => write!(f, "domain"),
             Token::Mapping => write!(f, "mapping"),
+            Token::Schema => write!(f, "schema"),
+            Token::Type => write!(f, "type"),
+            Token::Field => write!(f, "field"),
+            Token::Ref => write!(f, "ref"),
+            Token::Compose => write!(f, "compose"),
+            Token::Body => write!(f, "body"),
+            Token::Heading => write!(f, "heading"),
+            Token::Entity => write!(f, "entity"),
             Token::String(s) => write!(f, "{:?}", s),
+            Token::RawString(s) => write!(f, "{:?}", s),
             Token::Annotation(name, value) => write!(f, "@{}({:?})", name, value),
             Token::LBrace => write!(f, "{{"),
             Token::RBrace => write!(f, "}}"),
