@@ -14,7 +14,6 @@
 //!
 //! Composition is one level deep.
 
-use crate::codegen::markdown::escape_yaml_string;
 use crate::error::{VdlError, VdlResult};
 use crate::model::{FieldKind, Instance, SchemaDoc, TypeDecl, Value};
 use crate::validator::schema::validate_schema;
@@ -42,7 +41,7 @@ pub fn compose(doc: &SchemaDoc, root_id: &str) -> VdlResult<String> {
         ),
     })?;
 
-    let frontmatter = render_frontmatter(root, root_type);
+    let frontmatter = render_frontmatter(root, root_type)?;
 
     let mut blocks: Vec<String> = Vec::new();
 
@@ -98,17 +97,24 @@ pub fn compose(doc: &SchemaDoc, root_id: &str) -> VdlResult<String> {
     Ok(output)
 }
 
-fn render_frontmatter(root: &Instance, root_type: &TypeDecl) -> String {
+fn render_frontmatter(root: &Instance, root_type: &TypeDecl) -> VdlResult<String> {
+    check_reserved_keys(root_type)?;
+
     let mut out = String::from("---\n");
-    out.push_str(&format!("id: {}\n", root.id));
-    out.push_str(&format!("type: {}\n", root.type_name));
+    // Values are always serialized as double-quoted strings, so `true`, `null`,
+    // and `001` survive a YAML parser as strings.
+    out.push_str(&format!("id: {}\n", yaml_double_quoted(&root.id)));
+    out.push_str(&format!(
+        "type: {}\n",
+        yaml_double_quoted(&root.type_name)
+    ));
 
     for field in root_type.text_fields() {
         if let Some(Value::Text(text)) = root.value(&field.name) {
             out.push_str(&format!(
-                "{}: \"{}\"\n",
-                field.name,
-                escape_yaml_string(text)
+                "{}: {}\n",
+                yaml_key(&field.name),
+                yaml_double_quoted(text)
             ));
         }
     }
@@ -120,14 +126,37 @@ fn render_frontmatter(root: &Instance, root_type: &TypeDecl) -> String {
         if ids.is_empty() {
             continue;
         }
-        out.push_str(&format!("{}:\n", field.name));
+        out.push_str(&format!("{}:\n", yaml_key(&field.name)));
         for id in ids {
-            out.push_str(&format!("  - {}\n", yaml_scalar(id)));
+            out.push_str(&format!("  - {}\n", yaml_double_quoted(id)));
         }
     }
 
     out.push_str("---\n");
-    out
+    Ok(out)
+}
+
+/// `id` and `type` belong to the compiler in the flat frontmatter format.
+///
+/// Only fields that actually reach the frontmatter are checked, so a `compose`
+/// field may share a name with a reserved key without colliding.
+fn check_reserved_keys(root_type: &TypeDecl) -> VdlResult<()> {
+    let emitted = root_type
+        .text_fields()
+        .chain(root_type.ref_fields().filter(|f| !f.compose));
+
+    for field in emitted {
+        if field.name == "id" || field.name == "type" {
+            return Err(VdlError::Codegen {
+                message: format!(
+                    "root field '{}' of type '{}' collides with the compiler-owned frontmatter key '{}'; rename the field",
+                    field.name, root_type.name, field.name
+                ),
+            });
+        }
+    }
+
+    Ok(())
 }
 
 /// The root type's `heading` field value, if it declares one.
@@ -148,17 +177,54 @@ fn body_text(instance: &Instance, type_decl: &TypeDecl) -> Option<String> {
     }
 }
 
-/// Render an ID as a YAML scalar, quoting only when it would be ambiguous.
-fn yaml_scalar(value: &str) -> String {
-    let plain = !value.is_empty()
-        && value
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'));
-    if plain {
-        value.to_string()
-    } else {
-        format!("\"{}\"", escape_yaml_string(value))
+/// Serialize a string as a YAML double-quoted scalar.
+///
+/// Everything YAML would otherwise reinterpret (booleans, nulls, numbers,
+/// leading zeros, control characters) stays a string because it is quoted and
+/// escaped here.
+fn yaml_double_quoted(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() + 2);
+    out.push('"');
+    for c in value.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 || c == '\u{7f}' => {
+                out.push_str(&format!("\\x{:02x}", c as u32));
+            }
+            c => out.push(c),
+        }
     }
+    out.push('"');
+    out
+}
+
+/// Serialize an author-defined key, quoting it unless it is unambiguously plain.
+fn yaml_key(name: &str) -> String {
+    if is_plain_yaml_key(name) {
+        name.to_string()
+    } else {
+        yaml_double_quoted(name)
+    }
+}
+
+fn is_plain_yaml_key(name: &str) -> bool {
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_alphabetic() || c == '_' => {}
+        _ => return false,
+    }
+    if !chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+        return false;
+    }
+    // Words YAML would resolve to a non-string scalar.
+    !matches!(
+        name,
+        "true" | "false" | "null" | "yes" | "no" | "on" | "off" | "y" | "n"
+    )
 }
 
 #[cfg(test)]
@@ -225,8 +291,8 @@ entity "Runbook" "ops-guide" {
     #[test]
     fn frontmatter_lists_id_type_then_text_fields() {
         let md = render("core-guide");
-        let id_pos = md.find("id: core-guide").unwrap();
-        let type_pos = md.find("type: Runbook").unwrap();
+        let id_pos = md.find("id: \"core-guide\"").unwrap();
+        let type_pos = md.find("type: \"Runbook\"").unwrap();
         let label_pos = md.find("label: \"Core Guide\"").unwrap();
         assert!(id_pos < type_pos && type_pos < label_pos);
     }
@@ -317,7 +383,7 @@ entity "A" "a" {
     #[test]
     fn ordinary_refs_render_ids_without_bodies() {
         let md = render("core-guide");
-        assert!(md.contains("  - appendix"));
+        assert!(md.contains("  - \"appendix\""));
         assert!(!md.contains("Appendix body that must not be inlined."));
     }
 
@@ -382,6 +448,109 @@ entity "Manual" "m" {
         assert!(md.contains("# The Manual"));
         assert!(md.contains("## One"));
         assert!(md.contains("One body."));
-        assert!(md.contains("type: Manual"));
+        assert!(md.contains("type: \"Manual\""));
+    }
+
+    // -- YAML frontmatter safety -------------------------------------------
+
+    #[test]
+    fn reserved_id_key_collision_is_an_error() {
+        let src = r#"
+schema "s" {
+    type "A" {
+        field "id" text heading
+    }
+}
+entity "A" "a" { field "id" "x" }
+"#;
+        match compose(&doc(src), "a") {
+            Err(VdlError::Codegen { message }) => {
+                assert!(message.contains("'id'"), "{}", message);
+                assert!(message.contains("compiler-owned"), "{}", message);
+            }
+            other => panic!("expected codegen error, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn reserved_type_key_collision_is_an_error() {
+        let src = r#"
+schema "s" {
+    type "A" {
+        field "label" text heading
+        field "type" ref "B"
+    }
+    type "B" {
+        field "label" text heading
+    }
+}
+entity "B" "b" { field "label" "B" }
+entity "A" "a" {
+    field "label" "A"
+    field "type" [ "b" ]
+}
+"#;
+        match compose(&doc(src), "a") {
+            Err(VdlError::Codegen { message }) => assert!(message.contains("'type'"), "{}", message),
+            other => panic!("expected codegen error, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn yaml_sensitive_values_stay_strings() {
+        let src = r#"
+schema "s" {
+    type "A" {
+        field "label" text heading
+        field "notes" ref "B"
+    }
+    type "B" {
+        field "label" text heading
+    }
+}
+entity "B" "001" { field "label" "true" }
+entity "A" "null" {
+    field "label" "001"
+    field "notes" [ "001" ]
+}
+"#;
+        let md = compose(&doc(src), "null").unwrap();
+        assert!(md.contains(r#"id: "null""#), "{}", md);
+        assert!(md.contains(r#"type: "A""#), "{}", md);
+        assert!(md.contains(r#"label: "001""#), "{}", md);
+        assert!(md.contains(r#"  - "001""#), "{}", md);
+    }
+
+    #[test]
+    fn keys_requiring_quotes_are_quoted() {
+        let src = r#"
+schema "s" {
+    type "A" {
+        field "label" text heading
+        field "true" text
+        field "weird: key" text
+    }
+}
+entity "A" "a" {
+    field "label" "A"
+    field "true" "x"
+    field "weird: key" "y"
+}
+"#;
+        let md = compose(&doc(src), "a").unwrap();
+        assert!(md.contains(r#""true": "x""#), "{}", md);
+        assert!(md.contains(r#""weird: key": "y""#), "{}", md);
+    }
+
+    #[test]
+    fn control_characters_are_escaped() {
+        let src = "schema \"s\" {\n    type \"A\" { field \"label\" text heading }\n}\nentity \"A\" \"a\" { field \"label\" \"line\\twith\\ttabs\" }\n";
+        let md = compose(&doc(src), "a").unwrap();
+        let slash_t = format!("{}{}", '\\', 't');
+        assert!(
+            md.contains(&format!("label: \"line{}with{}tabs\"", slash_t, slash_t)),
+            "{}",
+            md
+        );
     }
 }
