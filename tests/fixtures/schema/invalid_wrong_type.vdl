@@ -1,0 +1,29 @@
+// Negative fixture: `chapters` requires a Chapter, but the reference resolves
+// to a Runbook.
+
+schema "runbooks" {
+    type "Runbook" {
+        field "label" text heading
+        field "chapters" ref "Chapter" compose
+    }
+
+    type "Chapter" {
+        field "label" text heading
+        field "content" body
+    }
+}
+
+entity "Chapter" "intro" {
+    field "label" "Introduction"
+    field "content" """Prose."""
+}
+
+entity "Runbook" "other" {
+    field "label" "Other"
+    field "chapters" [ "intro" ]
+}
+
+entity "Runbook" "core-guide" {
+    field "label" "Core Guide"
+    field "chapters" [ "other" ]
+}

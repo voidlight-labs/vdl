@@ -1,0 +1,19 @@
+// Negative fixture: the declared target type is a typo, and the empty
+// reference list must not hide it.
+
+schema "runbooks" {
+    type "Runbook" {
+        field "label" text heading
+        field "chapters" ref "Chaptre" compose
+    }
+
+    type "Chapter" {
+        field "label" text heading
+        field "content" body
+    }
+}
+
+entity "Runbook" "core-guide" {
+    field "label" "Core Guide"
+    field "chapters" [ ]
+}

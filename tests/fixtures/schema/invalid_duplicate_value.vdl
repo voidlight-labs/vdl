@@ -1,0 +1,14 @@
+// Negative fixture: the same field is supplied twice in one entity.
+
+schema "runbooks" {
+    type "Chapter" {
+        field "label" text heading
+        field "content" body
+    }
+}
+
+entity "Chapter" "intro" {
+    field "label" "Introduction"
+    field "label" "Introduction, again"
+    field "content" """Prose."""
+}

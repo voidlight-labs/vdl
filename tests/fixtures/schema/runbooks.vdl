@@ -1,0 +1,57 @@
+// Acceptance fixture for the schema document form.
+//
+// Everything the compiler needs is authored here: the types, the fields, which
+// field is the heading, which reference collection composes, and the bodies.
+// Renaming any of it must not require a Rust change.
+
+schema "runbooks" {
+    type "Runbook" {
+        field "label" text heading
+        field "chapters" ref "Chapter" compose
+        field "see_also" ref "Chapter"
+    }
+
+    type "Chapter" {
+        field "label" text heading
+        field "content" body
+    }
+}
+
+entity "Chapter" "intro" {
+    field "label" "Introduction"
+    field "content" """
+    Prose starts here without a heading line.
+
+    ### Internal heading stays as written
+
+    Text with **bold**, a “curly quote”, and an — em dash.
+    """
+}
+
+entity "Chapter" "rules" {
+    field "label" "Rules"
+    field "content" """
+    Rule one: keep the body verbatim.
+
+    Rule two: never reorder authored lists.
+    """
+}
+
+entity "Chapter" "appendix" {
+    field "label" "Appendix"
+    field "content" """
+    Appendix body. This text must never be inlined by an ordinary reference.
+    """
+}
+
+entity "Runbook" "core-guide" {
+    field "label" "Core Guide"
+    field "chapters" [ "intro", "rules" ]
+    field "see_also" [ "appendix" ]
+}
+
+entity "Runbook" "ops-guide" {
+    field "label" "Ops Guide"
+    field "chapters" [ "rules", "intro" ]
+    field "see_also" [ "appendix" ]
+}

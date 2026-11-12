@@ -102,3 +102,103 @@ fn test_compile_produces_expected_outputs() {
     // Optional tidy-up so the workspace stays clean.
     let _ = fs::remove_dir_all("output");
 }
+
+// ---------------------------------------------------------------------------
+// compose (schema documents)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_validate_schema_document_success() {
+    let output = run_vdl(["validate", "tests/fixtures/schema/runbooks.vdl"]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        output.status.success(),
+        "Expected `vdl validate` to accept a schema document.\nstdout: {}\nstderr: {}",
+        stdout,
+        stderr
+    );
+    assert!(stdout.contains("No errors"), "stdout: {}", stdout);
+}
+
+#[test]
+fn test_validate_schema_document_failure() {
+    let output = run_vdl(["validate", "tests/fixtures/schema/invalid_unresolved.vdl"]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(!output.status.success(), "expected validation to fail");
+    assert!(
+        stderr.contains("missing"),
+        "expected the unresolved ID in stderr, got: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_compose_writes_file() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let out = dir.path().join("core-guide.md");
+
+    let output = run_vdl([
+        "compose",
+        "tests/fixtures/schema/runbooks.vdl",
+        "--root",
+        "core-guide",
+        "--out",
+        out.to_str().unwrap(),
+    ]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "stderr: {}", stderr);
+
+    let content = fs::read_to_string(&out).expect("composed file should exist");
+    assert!(content.contains("# Core Guide"), "{}", content);
+    assert!(content.contains("## Introduction"), "{}", content);
+}
+
+#[test]
+fn test_compose_prints_to_stdout() {
+    let output = run_vdl([
+        "compose",
+        "tests/fixtures/schema/runbooks.vdl",
+        "--root",
+        "core-guide",
+    ]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success());
+    assert!(stdout.contains("## Introduction"), "stdout: {}", stdout);
+    assert!(stdout.contains("## Rules"), "stdout: {}", stdout);
+}
+
+#[test]
+fn test_compose_unknown_root_fails() {
+    let output = run_vdl([
+        "compose",
+        "tests/fixtures/schema/runbooks.vdl",
+        "--root",
+        "nope",
+    ]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(!output.status.success());
+    assert!(stderr.contains("nope"), "stderr: {}", stderr);
+}
+
+#[test]
+fn test_compose_rejects_legacy_document() {
+    let output = run_vdl([
+        "compose",
+        "tests/fixtures/seven_laws.vdl",
+        "--root",
+        "anything",
+    ]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(!output.status.success());
+    assert!(
+        stderr.contains("schema document"),
+        "expected a message about schema documents, got: {}",
+        stderr
+    );
+}
