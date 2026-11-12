@@ -257,6 +257,7 @@ decoded as UTF-8 and survives byte-identical.
 | V12 | composed collection whose target type declares no `heading` field |
 | V13 | `ref` field whose declared target type is undeclared, empty list included |
 | V14 | the same field supplied twice in one instance |
+| V15 | more than one `body` field in a type, even with no instances |
 
 Every diagnostic carries `file:line:column` and names the offending declaration
 or reference. All violations are collected, not short-circuited.
@@ -267,11 +268,11 @@ or reference. All violations are collected, not short-circuited.
 
 ```
 ---
-id: core-guide
-type: Runbook
+id: "core-guide"
+type: "Runbook"
 label: "Core Guide"
 see_also:
-  - appendix
+  - "appendix"
 ---
 
 # Core Guide
@@ -286,9 +287,23 @@ see_also:
 ```
 
 Frontmatter lists `id`, `type`, the root type's `text` fields in declaration
-order, then non-composed `ref` collections as YAML lists. Composed collections
-expand one level deep: each referenced entity contributes its heading and body.
-An ordinary reference contributes only its ID, never the target's body.
+order, then non-composed `ref` collections as YAML lists. `id`, type names, text
+values, and reference IDs are emitted as double-quoted YAML strings, so values
+like `true`, `null`, or `001` survive a YAML parser as strings. Author-defined
+keys are quoted whenever they would be ambiguous.
+
+`id` and `type` are compiler-owned keys. A root field that would be emitted
+under either name is a composition error, reported before any output is
+written.
+
+Composed collections expand one level deep: each referenced entity contributes
+its heading and body. An ordinary reference contributes only its ID, never the
+target's body.
+
+`--out` refuses to write over the input file. The check compares canonical paths
+(so relative segments and symlinks are caught) and, on Unix, device/inode
+identity (so hard links are caught too). On platforms where the standard library
+exposes no file identity, a hard-link alias is not detected.
 
 ## CLI Usage
 

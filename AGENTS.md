@@ -46,7 +46,7 @@ src/
 ├── lexer/          # Byte-oriented scanner → Token stream
 ├── parser/         # chumsky 0.9 combinators → AST (Module) or SchemaDoc
 ├── model/          # SchemaDoc: user-declared types, fields, instances
-├── validator/      # 6 legacy rules + 14 schema rules → VdlResult<()>
+├── validator/      # 6 legacy rules + 15 schema rules → VdlResult<()>
 ├── graph/          # In-memory DAG with IndexMap nodes
 ├── codegen/        # json, markdown, search, dot + compose (schema docs)
 ├── cli/            # clap 4.5 commands + miette error reporting
@@ -105,6 +105,14 @@ parser, validator, or renderer.
 - **Schema rules live in `validator::schema`, not the parser.** The parser
   accepts `heading` on a ref field or `compose` on a text field so that one
   located diagnostic (V10/V11) owns the message.
+- **Frontmatter is always quoted YAML.** `id`, `type`, text values, and ref IDs
+  go through `yaml_double_quoted`; author keys through `yaml_key`. `id` and
+  `type` are reserved for the compiler, and a root field that would emit under
+  either name is a composition error. Do not relax this without a real YAML
+  round-trip test (no YAML crate is a dependency).
+- **`compose --out` never overwrites its input.** `cli::output_aliases_input`
+  compares canonical paths plus, on Unix, device/inode. The non-Unix hard-link
+  gap is deliberate: std exposes no file identity there.
 - **Adding a schema rule:** add a function returning `Vec<ValidationError>` in
   `src/validator/schema.rs`, call it from `collect_schema_errors`, add a unit
   test named `v<N>_*`, and add the row to the README table.
