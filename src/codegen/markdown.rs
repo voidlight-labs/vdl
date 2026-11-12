@@ -115,7 +115,7 @@ fn generate_entity(entity: &Entity) -> VdlResult<String> {
 }
 
 /// Escape a string for use inside YAML double quotes.
-fn escape_yaml_string(s: &str) -> String {
+pub(crate) fn escape_yaml_string(s: &str) -> String {
     s.replace('\\', "\\\\")
         .replace('"', "\\\"")
         .replace('\n', "\\n")
