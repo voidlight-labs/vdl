@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand};
+use std::path::PathBuf;
 
 /// Voidlight Definition Language compiler.
 ///
@@ -58,5 +59,21 @@ pub enum Commands {
         /// Path to a .vdl file or directory containing .vdl files.
         #[arg(default_value = ".")]
         path: String,
+    },
+
+    /// Compose a schema document into one complete Markdown file.
+    ///
+    /// The document must declare exactly one schema block and the entities it
+    /// instantiates. Composition renders the root entity, its heading and
+    /// body, then every collection marked `compose` in declared order.
+    Compose {
+        /// Path to one .vdl schema document.
+        path: String,
+        /// Entity ID of the composition root.
+        #[arg(long)]
+        root: String,
+        /// Output file path. Prints to stdout when omitted.
+        #[arg(long)]
+        out: Option<PathBuf>,
     },
 }

@@ -159,6 +159,9 @@ pub fn run() -> Result<()> {
         commands::Commands::Graph { entity_id, path } => cmd_graph(&entity_id, &path),
         commands::Commands::Diff { id, v1, v2, path } => cmd_diff(&id, &v1, &v2, &path),
         commands::Commands::Search { query, path } => cmd_search(&query, &path),
+        commands::Commands::Compose { path, root, out } => {
+            cmd_compose(&path, &root, out.as_deref())
+        }
     }
 }
 
@@ -167,17 +170,82 @@ pub fn run() -> Result<()> {
 // ---------------------------------------------------------------------------
 
 /// Validate VDL files and report errors with precise locations.
+///
+/// Each file is dispatched to its own pipeline: legacy entity documents are
+/// merged and validated together, schema documents are validated on their own
+/// because a schema document is single-file by contract.
 fn cmd_validate(path: &str) -> Result<()> {
     let files = collect_vdl_files(path)?;
     let file_count = files.len();
 
-    let module = wrap(parse_and_validate(&files))?;
-    let entity_count = module.entities.len();
+    let mut legacy_entities = Vec::new();
+    let mut schema_entity_count = 0usize;
+
+    for file in &files {
+        let source = wrap(read_file_to_string(file))?;
+        let tokens = wrap(lexer::lex(&source, file))?;
+
+        match wrap(parser::parse_document(&tokens, &source, file))? {
+            parser::Document::Legacy(module) => legacy_entities.extend(module.entities),
+            parser::Document::Schema(doc) => {
+                wrap(validator::schema::validate_schema(&doc))?;
+                schema_entity_count += doc.entities.len();
+            }
+        }
+    }
+
+    let legacy_entity_count = legacy_entities.len();
+    if legacy_entity_count > 0 {
+        let module = Module {
+            entities: legacy_entities,
+        };
+        wrap(validator::validate(&module))?;
+    }
 
     println!(
         "✓ Validated {} files, {} entities. No errors.",
-        file_count, entity_count
+        file_count,
+        legacy_entity_count + schema_entity_count
     );
+    Ok(())
+}
+
+/// Compose one schema document into a complete Markdown file.
+fn cmd_compose(path: &str, root: &str, out: Option<&Path>) -> Result<()> {
+    let files = collect_vdl_files(path)?;
+    let file = match files.as_slice() {
+        [single] => single.clone(),
+        _ => {
+            return Err(miette!(
+                "vdl compose takes exactly one .vdl schema document, found {}",
+                files.len()
+            ))
+        }
+    };
+
+    let source = wrap(read_file_to_string(&file))?;
+    let tokens = wrap(lexer::lex(&source, &file))?;
+    let doc = match wrap(parser::parse_document(&tokens, &source, &file))? {
+        parser::Document::Schema(doc) => doc,
+        parser::Document::Legacy(_) => {
+            return Err(miette!(
+                "composition requires a schema document; '{}' uses the legacy entity form",
+                file.display()
+            ))
+        }
+    };
+
+    let markdown = wrap(crate::codegen::compose::compose(&doc, root))?;
+
+    match out {
+        Some(out_path) => {
+            fs::write(out_path, markdown)
+                .map_err(|e| miette!("Failed to write {}: {}", out_path.display(), e))?;
+            println!("✓ Composed '{}' → {}", root, out_path.display());
+        }
+        None => print!("{}", markdown),
+    }
+
     Ok(())
 }
 
