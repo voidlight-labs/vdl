@@ -1,5 +1,6 @@
 pub mod error;
 pub mod rules;
+pub mod schema;
 
 use crate::error::{VdlError, VdlResult};
 use crate::parser::ast::Module;

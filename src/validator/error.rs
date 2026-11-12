@@ -36,6 +36,12 @@ pub enum ValidationError {
         location: SourceLocation,
         message: String,
     },
+
+    #[error("Schema violation at {location}: {message}")]
+    Schema {
+        location: SourceLocation,
+        message: String,
+    },
 }
 
 impl From<ValidationError> for crate::error::VdlError {
@@ -45,7 +51,8 @@ impl From<ValidationError> for crate::error::VdlError {
             | ValidationError::ReferenceIntegrity { location, message }
             | ValidationError::MissingEvidence { location, message }
             | ValidationError::IncompleteEvidence { location, message }
-            | ValidationError::InvalidVersion { location, message } => (location, message),
+            | ValidationError::InvalidVersion { location, message }
+            | ValidationError::Schema { location, message } => (location, message),
             ValidationError::Cycle { message } => {
                 let loc = SourceLocation::new(std::path::PathBuf::new(), 0, 0);
                 (loc, message)
