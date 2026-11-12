@@ -154,6 +154,142 @@ cargo insta review
 
 `major.minor` — e.g., `"5.0"`, `"1.10"`. Must match `^\d+\.\d+$`.
 
+## Schema Documents (author-defined model)
+
+Everything above describes the legacy v0.1 form: fixed entity types, evidence
+blocks, one compiler rule set. A schema document is a second, self-describing
+form. It declares its own entity types and instantiates them, and the compiler
+reads every decision from that schema. No type name, field name, heading field,
+or composition target is known to the compiler ahead of time.
+
+### Document shape
+
+One file holds exactly one `schema` block followed by its `entity` instances.
+Dispatch is positional: a file whose first non-annotation token is `schema` or
+`entity` is a schema document; anything else stays on the legacy path. Zero
+schema blocks, two schema blocks, or entities without a schema block are parse
+errors. Cross-file merging is out of scope.
+
+```vdl
+schema "runbooks" {
+    type "Runbook" {
+        field "label" text heading
+        field "chapters" ref "Chapter" compose
+        field "see_also" ref "Chapter"
+    }
+
+    type "Chapter" {
+        field "label" text heading
+        field "content" body
+    }
+}
+
+entity "Chapter" "intro" {
+    field "label" "Introduction"
+    field "content" """
+    Prose starts here, no heading line.
+
+    ### Internal heading stays as written
+    """
+}
+
+entity "Runbook" "core-guide" {
+    field "label" "Core Guide"
+    field "chapters" [ "intro" ]
+    field "see_also" [ "appendix" ]
+}
+```
+
+### Field kinds
+
+| Declaration | Value form | Meaning |
+|-------------|------------|---------|
+| `field "<name>" text` | `"..."` | Single-line quoted string |
+| `field "<name>" body` | `"""..."""` | Multiline raw Markdown, rendered verbatim |
+| `field "<name>" ref "<Type>"` | `[ "id", "id" ]` | Ordered collection of entity IDs of type `<Type>` |
+
+Every `ref` is a collection; there are no scalar references in this slice. All
+declared fields are required; optional fields are not supported yet.
+
+### Modifiers
+
+- `heading` — `text` fields only, at most one per type. It names the field used
+  as that type's heading. A root entity renders it as `# ...`; a composed
+  reference renders the target's heading field as `## ...`. No heading is ever
+  inferred from a field name.
+- `compose` — `ref` fields only. Marks the collection for document composition.
+  Multiple composed fields render in declaration order, and each list renders
+  in author order (never sorted).
+
+A composed collection's target type must declare a heading field; this is
+validated, not guessed.
+
+### Raw body literal rules
+
+Bodies are literal, with exactly five permitted transformations. Fidelity means
+byte-identical after these:
+
+1. `\r\n` and lone `\r` are normalized to `\n`.
+2. No escape processing: `\"`, `\\` and friends stay as written.
+3. One newline immediately after the opening `"""` is dropped.
+4. A trailing whitespace-only line before the closing `"""` is dropped.
+5. The longest common leading whitespace prefix across non-blank lines is
+   stripped, so an indented source block does not become a Markdown code block.
+
+Blank lines and relative indentation are preserved exactly. Non-ASCII text is
+decoded as UTF-8 and survives byte-identical.
+
+### Validation rules
+
+| Rule | Rejects |
+|------|---------|
+| V1 | instance of an undeclared type |
+| V2 | duplicate entity ID |
+| V3 | duplicate type name |
+| V4 | duplicate field name inside one type |
+| V5 | field supplied that its type does not declare |
+| V6 | declared field not supplied |
+| V7 | value shape does not match the declared field kind |
+| V8 | reference to an undeclared entity ID |
+| V9 | reference whose target entity has a different type |
+| V10 | `compose` on a non-`ref` field |
+| V11 | `heading` on a non-`text` field, or more than one `heading` per type |
+| V12 | composed collection whose target type declares no `heading` field |
+| V13 | `ref` field whose declared target type is undeclared, empty list included |
+| V14 | the same field supplied twice in one instance |
+
+Every diagnostic carries `file:line:column` and names the offending declaration
+or reference. All violations are collected, not short-circuited.
+
+### Composition output
+
+`vdl compose <file> --root <entity-id>` renders one Markdown document:
+
+```
+---
+id: core-guide
+type: Runbook
+label: "Core Guide"
+see_also:
+  - appendix
+---
+
+# Core Guide
+
+## Introduction
+
+<chapter body verbatim>
+
+## Rules
+
+<chapter body verbatim>
+```
+
+Frontmatter lists `id`, `type`, the root type's `text` fields in declaration
+order, then non-composed `ref` collections as YAML lists. Composed collections
+expand one level deep: each referenced entity contributes its heading and body.
+An ordinary reference contributes only its ID, never the target's body.
+
 ## CLI Usage
 
 > All commands that take a `<path>` argument accept either a single `.vdl` file or a directory. Directories are scanned recursively for `.vdl` files.
@@ -232,6 +368,17 @@ Search entity IDs and titles with a case-insensitive regex.
 ```bash
 vdl search autonomy
 # → soul.law.i | law | Autonomy Is Mandatory
+```
+
+### `vdl compose <file> --root <entity_id> [--out <file>]`
+
+Render a schema document into one complete Markdown file. Requires a schema
+document (one `schema` block); legacy entity files are rejected. Prints to
+stdout when `--out` is omitted.
+
+```bash
+vdl compose tests/fixtures/schema/runbooks.vdl --root core-guide
+vdl compose tests/fixtures/schema/runbooks.vdl --root core-guide --out core-guide.md
 ```
 
 ## Architecture Overview

@@ -13,7 +13,7 @@ cargo build --release
 # Install globally
 cargo install --path .
 
-# Test (92 unit tests + 3 CLI integration tests + 4 snapshot tests)
+# Test (148 unit tests + 9 CLI integration tests + 15 schema integration tests + 4 snapshot tests)
 cargo test
 
 # Run only unit tests
@@ -35,13 +35,20 @@ cargo check --tests
 
 Each stage is a separate module under `src/`. All stages are deterministic. The graph lives entirely in memory (no external database).
 
+**Two document forms.** Legacy entity documents run the five stages above.
+Schema documents (author-defined types) short-circuit the graph stage:
+`parse_document` → `SchemaDoc` → `validator::schema` → `codegen::compose`.
+Dispatch is positional: the first non-annotation token decides. See
+"Schema documents" below before touching the parser.
+
 ```
 src/
 ├── lexer/          # Byte-oriented scanner → Token stream
-├── parser/         # chumsky 0.9 combinators → AST (Module)
-├── validator/      # 6 independent rules → VdlResult<()>
+├── parser/         # chumsky 0.9 combinators → AST (Module) or SchemaDoc
+├── model/          # SchemaDoc: user-declared types, fields, instances
+├── validator/      # 6 legacy rules + 14 schema rules → VdlResult<()>
 ├── graph/          # In-memory DAG with IndexMap nodes
-├── codegen/        # 4 output targets (json, markdown, search, dot)
+├── codegen/        # json, markdown, search, dot + compose (schema docs)
 ├── cli/            # clap 4.5 commands + miette error reporting
 ├── error.rs        # VdlError enum with source locations
 ├── lib.rs          # Public library API
@@ -70,6 +77,37 @@ Each rule is a separate function returning `Vec<ValidationError>`:
 - `entity_type_color()` in `graph/mod.rs` is the **canonical color scheme** used by both `codegen/dot.rs` and `cli::cmd_graph()`
 - `GraphQuery` precomputes reverse adjacency in `new()` for efficient `descendants()` queries
 - Cycle detection in both validator and graph builder is intentional (defense in depth)
+
+### Schema documents (second document form)
+
+Added in the user-defined object model slice. Read this before changing the
+parser, validator, or renderer.
+
+- **Dispatch lives in `parser::parse_document`.** First non-annotation token
+  `schema` or `entity` → schema document; anything else → legacy `parse()`.
+  The legacy path is untouched, so its fixtures keep working.
+- **`SchemaDoc` is single-file by contract.** `schema` is not an `Option`:
+  zero or two `schema` blocks are parse errors (`parse_schema_document` counts
+  them before parsing).
+- **Domain vocabulary is forbidden in Rust.** No comparison against `"Runbook"`,
+  `"Section"`, `"sections"`, `"title"`, or `"body"` anywhere in `src/`. Heading
+  is a schema flag (`FieldDecl::heading`), body is a field kind
+  (`FieldKind::Body`), composition is a schema flag (`FieldDecl::compose`).
+  `tests/schema_test.rs::renaming_types_needs_no_rust_change` is the guard.
+- **Composition is one level deep.** `codegen::compose` expands the root, its
+  heading and body, then every composed collection in declaration order and
+  author order. Ordinary refs go into frontmatter as YAML lists and never inline
+  a body.
+- **Body literals are raw.** `lexer::read_raw_string_literal` normalizes CRLF,
+  drops one leading newline, drops a trailing whitespace-only line, and decodes
+  UTF-8 properly. `parser::schema::dedent` strips the common indent at parse
+  time. Those are the only permitted transformations; see README for the rules.
+- **Schema rules live in `validator::schema`, not the parser.** The parser
+  accepts `heading` on a ref field or `compose` on a text field so that one
+  located diagnostic (V10/V11) owns the message.
+- **Adding a schema rule:** add a function returning `Vec<ValidationError>` in
+  `src/validator/schema.rs`, call it from `collect_schema_errors`, add a unit
+  test named `v<N>_*`, and add the row to the README table.
 
 ### CLI (`src/cli/`)
 - All commands accept `<path>` arg (file or directory); `graph`/`diff`/`search` default to `"."` if omitted
@@ -109,11 +147,16 @@ Local test wrappers (e.g., `entity()`, `make_entity()`) delegate to these helper
 ### Integration Tests (`tests/`)
 - `cli_test.rs` — spawns binary via `cargo run` for end-to-end validation
 - `snapshot_test.rs` — uses `insta` to snapshot JSON, Markdown, Search, DOT outputs
+- `schema_test.rs` — schema document acceptance, negative cases, CRLF fidelity,
+  and the rename check that proves no domain vocabulary lives in `src/`
 
 ### Fixtures (`tests/fixtures/`)
 - `seven_laws.vdl` — complete valid VDL: 1 framework + 7 laws with `derives_from` chains
 - `divine_alignment.vdl` — framework with all relationship types + full evidence block
 - `invalid_cycle.vdl` — intentionally invalid: circular `requires` chain
+- `schema/runbooks.vdl` — schema document acceptance fixture: two runbooks sharing chapters
+- `schema/invalid_*.vdl` — unresolved reference, wrong target type, undeclared
+  target type with an empty list, duplicate field value
 
 ## Adding a New Validation Rule
 
@@ -135,6 +178,21 @@ Local test wrappers (e.g., `entity()`, `make_entity()`) delegate to these helper
 5. Add unit tests and snapshot test
 
 ## Known Limitations (v0.1)
+
+### Schema documents
+
+- **All fields are required.** `optional` is not in the grammar yet.
+- **Composition is one level deep.** A composed entity cannot itself compose
+  another collection; nesting is not implemented.
+- **No scalar references.** Every `ref` is an ordered collection.
+- **One file, one schema.** Cross-file entity merging and schema distribution
+  are out of scope; `vdl compose` takes exactly one file.
+- **No inheritance, executable methods, plugin validators, or external content
+  resolvers.**
+- **Schema documents do not reach the graph.** `vdl compile`, `vdl graph`,
+  `vdl search`, and `vdl diff` still operate on legacy documents only.
+
+### Legacy
 
 - **No incremental compilation** — full recompile every run
 - **No plugin system** — output targets are hardcoded
