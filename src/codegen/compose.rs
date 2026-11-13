@@ -8,14 +8,13 @@
 //! * the root's `body` field is emitted verbatim;
 //! * each `compose`d collection is expanded in field declaration order and,
 //!   inside a field, in author order; every referenced entity contributes
-//!   `## <its heading field>` and its body verbatim;
+//!   a heading one level deeper than its parent and its body verbatim;
 //! * nothing else is expanded, so an ordinary reference never inlines the
 //!   target's body.
 //!
-//! Composition is one level deep.
 
 use crate::error::{VdlError, VdlResult};
-use crate::model::{FieldKind, Instance, SchemaDoc, TypeDecl, Value};
+use crate::model::{body_include_directives, resolve_include_candidates, InlineItem, Instance, SchemaDoc, TypeDecl, Value};
 use crate::validator::schema::validate_schema;
 
 /// Compose the document rooted at `root_id`.
@@ -24,8 +23,16 @@ use crate::validator::schema::validate_schema;
 ///
 /// Returns the schema validation error when the document is not valid, and
 /// [`VdlError::Codegen`] when the root or a composed target cannot be resolved
-/// or lacks a heading value.
+/// or lacks a heading value, or when composition cycles or exceeds six levels.
 pub fn compose(doc: &SchemaDoc, root_id: &str) -> VdlResult<String> {
+    compose_with_numbering(doc, root_id, false)
+}
+
+pub(crate) fn compose_with_numbering(
+    doc: &SchemaDoc,
+    root_id: &str,
+    number_headings: bool,
+) -> VdlResult<String> {
     validate_schema(doc)?;
 
     let root = doc.instance(root_id).ok_or_else(|| VdlError::Codegen {
@@ -43,50 +50,15 @@ pub fn compose(doc: &SchemaDoc, root_id: &str) -> VdlResult<String> {
 
     let frontmatter = render_frontmatter(root, root_type)?;
 
-    let mut blocks: Vec<String> = Vec::new();
-
-    if let Some(heading_value) = heading_text(root, root_type) {
-        blocks.push(format!("# {}", heading_value));
-    }
-    if let Some(body) = body_text(root, root_type) {
-        blocks.push(body);
-    }
-
-    for field in root_type.composed_fields() {
-        let FieldKind::Refs { .. } = field.kind else {
-            continue;
-        };
-        let Some(Value::Refs(ids)) = root.value(&field.name) else {
-            continue;
-        };
-
-        for id in ids {
-            let target = doc.instance(id).ok_or_else(|| VdlError::Codegen {
-                message: format!(
-                    "entity '{}' field '{}' references unresolved entity '{}'",
-                    root.id, field.name, id
-                ),
-            })?;
-            let target_type = doc.type_decl(&target.type_name).ok_or_else(|| VdlError::Codegen {
-                message: format!(
-                    "entity '{}' has undeclared type '{}'",
-                    target.id, target.type_name
-                ),
-            })?;
-
-            let heading = heading_text(target, target_type).ok_or_else(|| VdlError::Codegen {
-                message: format!(
-                    "composed entity '{}' of type '{}' has no heading value",
-                    target.id, target_type.name
-                ),
-            })?;
-            blocks.push(format!("## {}", heading));
-
-            if let Some(body) = body_text(target, target_type) {
-                blocks.push(body);
-            }
-        }
-    }
+    let mut blocks = Vec::new();
+    render_entity(
+        doc,
+        root,
+        root_type,
+        &mut Vec::new(),
+        &mut blocks,
+        number_headings.then_some(""),
+    )?;
 
     let mut output = frontmatter;
     if !blocks.is_empty() {
@@ -95,6 +67,177 @@ pub fn compose(doc: &SchemaDoc, root_id: &str) -> VdlResult<String> {
         output.push('\n');
     }
     Ok(output)
+}
+
+fn render_entity<'doc>(
+    doc: &'doc SchemaDoc,
+    entity: &'doc Instance,
+    entity_type: &'doc TypeDecl,
+    ancestors: &mut Vec<&'doc str>,
+    blocks: &mut Vec<String>,
+    section_number: Option<&str>,
+) -> VdlResult<()> {
+    let id = entity.id.as_str();
+    if ancestors.contains(&id) {
+        let chain = ancestors.iter().copied().chain([id]).collect::<Vec<_>>();
+        return Err(VdlError::Codegen {
+            message: format!("composition cycle: {}", chain.join(" -> ")),
+        });
+    }
+
+    let level = ancestors.len() + 1;
+    if level > 6 {
+        return Err(VdlError::Codegen {
+            message: format!("composition of '{}' exceeds Markdown's six heading levels", id),
+        });
+    }
+
+    match heading_text(entity, entity_type) {
+        Some(heading) => {
+            let marker = "#".repeat(level);
+            let heading = match section_number {
+                Some(number) if level == 2 => format!("{} {}. {}", marker, number, heading),
+                Some(number) if level > 2 => format!("{} {} {}", marker, number, heading),
+                _ => format!("{} {}", marker, heading),
+            };
+            blocks.push(heading);
+        }
+        None if level > 1 => {
+            return Err(VdlError::Codegen {
+                message: format!(
+                    "composed entity '{}' of type '{}' has no heading value",
+                    id, entity_type.name
+                ),
+            });
+        }
+        None => {}
+    }
+    ancestors.push(id);
+    let mut child_index = 0;
+    if let Some(body_field) = entity_type.body_field() {
+        if let Some(value @ (Value::Body(_) | Value::BracedBody(_))) = entity.value(&body_field.name) {
+            let body = match value { Value::Body(body) | Value::BracedBody(body) => body, _ => unreachable!() };
+            if !body.trim().is_empty() {
+                if body_field.compose_targets.is_empty() || !matches!(value, Value::BracedBody(_)) {
+                    blocks.push(labelled_body(entity_type, body));
+                } else {
+                    render_body_includes(doc, entity, entity_type, body, ancestors, blocks, section_number, &mut child_index)?;
+                }
+            }
+        }
+    }
+    for field in entity_type.composed_fields() {
+        let Some(value) = entity.value(&field.name) else {
+            continue;
+        };
+        if field.inline {
+            match value {
+                Value::Refs(ids) => {
+                    for id in ids {
+                        blocks.push(inline_body(doc, id)?);
+                    }
+                }
+                Value::Inline(items) => {
+                    for item in items {
+                        blocks.push(match item {
+                            InlineItem::Ref(id) => inline_body(doc, id)?,
+                            InlineItem::Prose(prose) => prose.clone(),
+                        });
+                    }
+                }
+                _ => {}
+            }
+            continue;
+        }
+        let Value::Refs(ids) = value else {
+            continue;
+        };
+        for id in ids {
+            let target = doc.instance(id).ok_or_else(|| VdlError::Codegen {
+                message: format!(
+                    "entity '{}' field '{}' references unresolved entity '{}'",
+                    entity.id, field.name, id
+                ),
+            })?;
+            let target_type = doc.type_decl(&target.type_name).ok_or_else(|| VdlError::Codegen {
+                message: format!(
+                    "entity '{}' has undeclared type '{}'",
+                    target.id, target.type_name
+                ),
+            })?;
+            child_index += 1;
+            let child_number = section_number.map(|parent| {
+                if parent.is_empty() {
+                    child_index.to_string()
+                } else {
+                    format!("{}.{}", parent, child_index)
+                }
+            });
+            render_entity(
+                doc,
+                target,
+                target_type,
+                ancestors,
+                blocks,
+                child_number.as_deref(),
+            )?;
+        }
+    }
+    ancestors.pop();
+    Ok(())
+}
+
+fn render_body_includes<'doc>(
+    doc: &'doc SchemaDoc, entity: &'doc Instance, entity_type: &'doc TypeDecl, body: &str,
+    ancestors: &mut Vec<&'doc str>, blocks: &mut Vec<String>, section_number: Option<&str>, child_index: &mut usize,
+) -> VdlResult<()> {
+    if let Some(label) = &entity_type.label { blocks.push(format!("**{}**", label)); }
+    let mut prose = Vec::new();
+    let directives = body_include_directives(body).into_iter().map(|(line, id)| (line, id.to_owned())).collect::<std::collections::HashMap<_, _>>();
+    for (line_index, line) in body.lines().enumerate() {
+        if let Some(name) = directives.get(&line_index).map(String::as_str) {
+            if !prose.join("\n").trim().is_empty() { blocks.push(prose.join("\n")); }
+            prose.clear();
+            let candidates = resolve_include_candidates(entity, name, doc);
+            let target_id = match candidates.as_slice() {
+                [id] => id.clone(),
+                [] => return Err(VdlError::Codegen { message: format!("body include '{}' has no matching target", name) }),
+                many => return Err(VdlError::Codegen { message: format!("body include '{}' is ambiguous: {}", name, many.join(", ")) }),
+            };
+            let target = doc.instance(&target_id).ok_or_else(|| VdlError::Codegen { message: format!("entity '{}' body includes unresolved entity '{}'", entity.id, target_id) })?;
+            let target_type = doc.type_decl(&target.type_name).ok_or_else(|| VdlError::Codegen { message: format!("included entity '{}' has undeclared type '{}'", target.id, target.type_name) })?;
+            let body_field = entity_type.body_field().expect("body compose is a body field");
+            if !body_field.compose_targets.iter().any(|t| t == &target.type_name) {
+                return Err(VdlError::Codegen { message: format!("entity '{}' body include '{}' has type '{}'; expected one of [{}]", entity.id, name, target.type_name, body_field.compose_targets.join(", ")) });
+            }
+            *child_index += 1;
+            let number = section_number.map(|parent| if parent.is_empty() { child_index.to_string() } else { format!("{}.{}", parent, child_index) });
+            render_entity(doc, target, target_type, ancestors, blocks, number.as_deref())?;
+        } else { prose.push(line.to_owned()); }
+    }
+    if !prose.join("\n").trim().is_empty() { blocks.push(prose.join("\n")); }
+    Ok(())
+}
+
+fn inline_body(doc: &SchemaDoc, id: &str) -> VdlResult<String> {
+    let body = doc.instance(id).and_then(|target| {
+        let target_type = doc.type_decl(&target.type_name)?;
+        let field = target_type.body_field()?;
+        match target.value(&field.name)? {
+            Value::Body(body) | Value::BracedBody(body) => Some(labelled_body(target_type, body)),
+            _ => None,
+        }
+    });
+    body.ok_or_else(|| VdlError::Codegen {
+        message: format!("inline entity '{}' has no body value", id),
+    })
+}
+
+fn labelled_body(entity_type: &TypeDecl, body: &str) -> String {
+    match &entity_type.label {
+        Some(label) => format!("**{}**\n\n{}", label, body),
+        None => body.to_owned(),
+    }
 }
 
 fn render_frontmatter(root: &Instance, root_type: &TypeDecl) -> VdlResult<String> {
@@ -112,7 +255,7 @@ fn render_frontmatter(root: &Instance, root_type: &TypeDecl) -> VdlResult<String
     for field in root_type.text_fields() {
         if let Some(Value::Text(text)) = root.value(&field.name) {
             out.push_str(&format!(
-                "{}: {}\n",
+                "{} {}\n",
                 yaml_key(&field.name),
                 yaml_double_quoted(text)
             ));
@@ -126,7 +269,7 @@ fn render_frontmatter(root: &Instance, root_type: &TypeDecl) -> VdlResult<String
         if ids.is_empty() {
             continue;
         }
-        out.push_str(&format!("{}:\n", yaml_key(&field.name)));
+        out.push_str(&format!("{}\n", yaml_key(&field.name)));
         for id in ids {
             out.push_str(&format!("  - {}\n", yaml_double_quoted(id)));
         }
@@ -168,15 +311,6 @@ fn heading_text(instance: &Instance, type_decl: &TypeDecl) -> Option<String> {
     }
 }
 
-/// The type's `body` field value, if it declares one and it is not empty.
-fn body_text(instance: &Instance, type_decl: &TypeDecl) -> Option<String> {
-    let field = type_decl.body_field()?;
-    match instance.value(&field.name) {
-        Some(Value::Body(body)) if !body.trim().is_empty() => Some(body.clone()),
-        _ => None,
-    }
-}
-
 /// Serialize a string as a YAML double-quoted scalar.
 ///
 /// Everything YAML would otherwise reinterpret (booleans, nulls, numbers,
@@ -192,8 +326,11 @@ fn yaml_double_quoted(value: &str) -> String {
             '\n' => out.push_str("\\n"),
             '\r' => out.push_str("\\r"),
             '\t' => out.push_str("\\t"),
-            c if (c as u32) < 0x20 || c == '\u{7f}' => {
+            '\0'..='\u{1f}' | '\u{7f}'..='\u{9f}' => {
                 out.push_str(&format!("\\x{:02x}", c as u32));
+            }
+            '\u{2028}' | '\u{2029}' | '\u{feff}' | '\u{fffe}' | '\u{ffff}' => {
+                out.push_str(&format!("\\u{:04x}", c as u32));
             }
             c => out.push(c),
         }
@@ -202,29 +339,15 @@ fn yaml_double_quoted(value: &str) -> String {
     out
 }
 
-/// Serialize an author-defined key, quoting it unless it is unambiguously plain.
+/// Emit a string key and its value indicator. Long keys need YAML's explicit
+/// key syntax because implicit keys are limited to 1024 characters.
 fn yaml_key(name: &str) -> String {
-    if is_plain_yaml_key(name) {
-        name.to_string()
+    let key = yaml_double_quoted(name);
+    if key.chars().count() > 1024 {
+        format!("? {}\n:", key)
     } else {
-        yaml_double_quoted(name)
+        format!("{}:", key)
     }
-}
-
-fn is_plain_yaml_key(name: &str) -> bool {
-    let mut chars = name.chars();
-    match chars.next() {
-        Some(c) if c.is_ascii_alphabetic() || c == '_' => {}
-        _ => return false,
-    }
-    if !chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
-        return false;
-    }
-    // Words YAML would resolve to a non-string scalar.
-    !matches!(
-        name,
-        "true" | "false" | "null" | "yes" | "no" | "on" | "off" | "y" | "n"
-    )
 }
 
 #[cfg(test)]
@@ -293,7 +416,7 @@ entity "Runbook" "ops-guide" {
         let md = render("core-guide");
         let id_pos = md.find("id: \"core-guide\"").unwrap();
         let type_pos = md.find("type: \"Runbook\"").unwrap();
-        let label_pos = md.find("label: \"Core Guide\"").unwrap();
+        let label_pos = md.find("\"label\": \"Core Guide\"").unwrap();
         assert!(id_pos < type_pos && type_pos < label_pos);
     }
 
@@ -309,6 +432,116 @@ entity "Runbook" "ops-guide" {
         let md = render("core-guide");
         assert!(md.contains("## Introduction"));
         assert!(md.contains("## Rules"));
+    }
+
+    #[test]
+    fn nested_composition_renders_shared_children_at_their_depth() {
+        let source = r#"
+schema "nested" {
+    type "Item" {
+        field "label" text heading
+        field "children" ref "Item" compose
+        field "related" ref "Item"
+    }
+}
+entity "Item" "root" {
+    field "label" "Root"
+    field "children" ["left", "right"]
+    field "related" ["appendix"]
+}
+entity "Item" "left" {
+    field "label" "Left"
+    field "children" ["shared"]
+    field "related" ["appendix"]
+}
+entity "Item" "right" {
+    field "label" "Right"
+    field "children" ["shared"]
+    field "related" []
+}
+entity "Item" "shared" {
+    field "label" "Shared"
+    field "children" []
+    field "related" []
+}
+entity "Item" "appendix" {
+    field "label" "Appendix"
+    field "children" []
+    field "related" []
+}
+"#;
+        let markdown = compose(&doc(source), "root").unwrap();
+        let body = markdown.split("---\n").nth(2).unwrap();
+        assert_eq!(
+            body,
+            "\n# Root\n\n## Left\n\n### Shared\n\n## Right\n\n### Shared\n"
+        );
+        assert!(markdown.contains("\"related\":\n  - \"appendix\""));
+    }
+
+    #[test]
+    fn nested_composition_rejects_a_cycle() {
+        let source = r#"
+schema "nested" {
+    type "Item" {
+        field "label" text heading
+        field "children" ref "Item" compose
+    }
+
+}
+entity "Item" "root" { field "label" "Root" field "children" ["child"] }
+entity "Item" "child" { field "label" "Child" field "children" ["root"] }
+"#;
+        let error = compose(&doc(source), "root").unwrap_err();
+        assert!(error.to_string().contains("root -> child -> root"));
+    }
+
+    #[test]
+    fn inline_composition_preserves_mixed_order_without_numbering_blocks() {
+        let source = r#"
+schema "example" {
+    type "Page" {
+        field "label" text heading
+        field "blocks" ref ["Note", "Quote"] inline
+        field "sections" ref "Section" compose
+    }
+    type "Note" { field "content" body }
+    type "Quote" label "[QUOTE]" { field "label" text heading field "content" body }
+    type "Section" { field "label" text heading }
+}
+Page root {
+    label "Root"
+    blocks [
+        quote,
+        prose {
+            Authored prose.
+        },
+        note,
+        quote
+    ]
+    sections [section]
+}
+Quote quote { label "Standalone title" content """> Quoted""" }
+Note note { content """An intervening note.""" }
+Section section { label "Section" }
+"#;
+        let doc = doc(source);
+        let markdown = compose_with_numbering(&doc, "root", true).unwrap();
+        assert!(markdown.ends_with(
+            "# Root\n\n**[QUOTE]**\n\n> Quoted\n\nAuthored prose.\n\n\
+             An intervening note.\n\n**[QUOTE]**\n\n> Quoted\n\n## 1. Section\n"
+        ));
+        assert!(compose(&doc, "quote")
+            .unwrap()
+            .ends_with("# Standalone title\n\n**[QUOTE]**\n\n> Quoted\n"));
+
+        let invalid = source.replace("        note,", "        section,");
+        let file = Path::new("test.vdl");
+        let tokens = crate::lexer::lex(&invalid, file).unwrap();
+        let invalid = crate::parser::schema::parse_schema_document(&tokens, &invalid, file)
+            .unwrap();
+        let error = compose(&invalid, "root").unwrap_err().to_string();
+        assert!(error.contains("expects one of [Note, Quote]"));
     }
 
     #[test]
@@ -347,7 +580,7 @@ entity "A" "a" {
 "#;
         let md = compose(&doc(src), "a").unwrap();
         assert!(!md.contains("# "), "{}", md);
-        assert!(md.contains("name: \"Name\""));
+        assert!(md.contains("\"name\": \"Name\""));
     }
 
     #[test]
@@ -378,6 +611,82 @@ entity "A" "a" {
         let md = render("core-guide");
         assert!(md.contains("### Internal heading"));
         assert!(md.contains("Prose for intro."));
+    }
+
+    #[test]
+    fn braced_body_includes_render_in_order_but_fenced_and_triple_quoted_text_stays_literal() {
+        let source = r#"
+package guide
+schema "guide" {
+    type "Page" { field "title" text heading field "body" body compose ["Artifact"] optional }
+    type "Artifact" { field "title" text heading field "body" body optional }
+}
+Page root {
+    title "Root"
+    body {
+        Before.
+
+        include preface
+
+        ```md
+        include preface
+        ```
+
+        After.
+    }
+}
+Artifact preface { title "Preface" body """Literal include absent.""" }
+"#;
+        let rendered = compose_with_numbering(&doc(source), "guide.root", true).unwrap();
+        let before = rendered.find("Before.").unwrap();
+        let included = rendered.find("## 1. Preface").unwrap();
+        let literal = rendered.find("Literal include absent.").unwrap();
+        let fenced = rendered.find("include preface").unwrap();
+        let after = rendered.find("After.").unwrap();
+        assert!(before < included && included < literal && literal < fenced && fenced < after);
+        assert_eq!(rendered.matches("## 1. Preface").count(), 1);
+    }
+
+    #[test]
+    fn body_include_cycles_are_rejected() {
+        let source = r#"
+package guide
+schema "guide" {
+    type "Page" { field "title" text heading field "body" body compose ["Page"] optional }
+}
+Page root {
+    title "Root"
+    body {
+    include root
+    }
+}
+"#;
+        let error = compose(&doc(source), "guide.root").unwrap_err().to_string();
+        assert!(error.contains("composition cycle"), "{error}");
+    }
+
+    #[test]
+    fn body_include_missing_and_wrong_type_errors_point_to_directive() {
+        let missing = r#"
+package guide
+schema "guide" { type "Page" { field "title" text heading field "body" body compose ["Artifact"] optional } type "Artifact" { field "title" text heading field "body" body } }
+Page root {
+    title "Root"
+    body {
+    include absent
+    }
+}
+"#;
+        let file = Path::new("include.vdl");
+        let missing_doc = crate::parser::schema::parse_schema_document(&crate::lexer::lex(missing, file).unwrap(), missing, file).unwrap();
+        let err = crate::validator::schema::validate_schema(&missing_doc).unwrap_err().to_string();
+        assert!(err.contains("include.vdl:7:"), "{err}");
+        assert!(err.contains("no matching local entity or import"), "{err}");
+
+        let wrong = missing.replace("include absent", "include root");
+        let doc = doc(&wrong);
+        let err = crate::validator::schema::validate_schema(&doc).unwrap_err().to_string();
+        assert!(err.contains("expected one of [Artifact]"), "{err}");
     }
 
     #[test]
@@ -419,7 +728,7 @@ schema "s" {
 entity "A" "a" { field "label" "A \"quoted\" \\ thing" }
 "#;
         let md = compose(&doc(src), "a").unwrap();
-        assert!(md.contains(r#"label: "A \"quoted\" \\ thing""#), "{}", md);
+        assert!(md.contains(r#""label": "A \"quoted\" \\ thing""#), "{}", md);
     }
 
     #[test]
@@ -517,29 +826,55 @@ entity "A" "null" {
         let md = compose(&doc(src), "null").unwrap();
         assert!(md.contains(r#"id: "null""#), "{}", md);
         assert!(md.contains(r#"type: "A""#), "{}", md);
-        assert!(md.contains(r#"label: "001""#), "{}", md);
+        assert!(md.contains(r#""label": "001""#), "{}", md);
         assert!(md.contains(r#"  - "001""#), "{}", md);
     }
 
     #[test]
-    fn keys_requiring_quotes_are_quoted() {
+    fn yaml_sensitive_text_and_reference_keys_are_quoted() {
         let src = r#"
 schema "s" {
     type "A" {
         field "label" text heading
-        field "true" text
+        field "True" text
+        field "NULL" text
         field "weird: key" text
+        field "On" ref "A"
     }
 }
 entity "A" "a" {
     field "label" "A"
-    field "true" "x"
+    field "True" "x"
+    field "NULL" "null"
     field "weird: key" "y"
+    field "On" [ "a" ]
 }
 "#;
         let md = compose(&doc(src), "a").unwrap();
-        assert!(md.contains(r#""true": "x""#), "{}", md);
+        assert!(md.contains(r#""True": "x""#), "{}", md);
+        assert!(md.contains(r#""NULL": "null""#), "{}", md);
         assert!(md.contains(r#""weird: key": "y""#), "{}", md);
+        assert!(md.contains("\"On\":\n  - \"a\"\n"), "{}", md);
+    }
+
+    #[test]
+    fn yaml_unicode_breaks_and_controls_are_escaped() {
+        let src = "
+schema \"s\" { type \"A\" { field \"key\u{85}suffix\" text } }
+entity \"A\" \"a\" { field \"key\u{85}suffix\" \"a\u{85}b\u{9f}c\u{2028}d\u{2029}e\" }
+";
+        let md = compose(&doc(src), "a").unwrap();
+        assert!(
+            md.contains(r#""key\x85suffix": "a\x85b\x9fc\u2028d\u2029e""#),
+            "{}",
+            md
+        );
+    }
+
+    #[test]
+    fn yaml_long_keys_use_explicit_syntax() {
+        let key = "a".repeat(1024);
+        assert_eq!(yaml_key(&key), format!("? \"{}\"\n:", key));
     }
 
     #[test]
@@ -548,7 +883,10 @@ entity "A" "a" {
         let md = compose(&doc(src), "a").unwrap();
         let slash_t = format!("{}{}", '\\', 't');
         assert!(
-            md.contains(&format!("label: \"line{}with{}tabs\"", slash_t, slash_t)),
+            md.contains(&format!(
+                "\"label\": \"line{}with{}tabs\"",
+                slash_t, slash_t
+            )),
             "{}",
             md
         );

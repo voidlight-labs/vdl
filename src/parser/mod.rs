@@ -83,6 +83,24 @@ enum EvidenceItem {
 // Public API
 // ---------------------------------------------------------------------------
 
+pub(crate) fn legacy_entity_type(token: &Token) -> Option<EntityType> {
+    match token {
+        Token::Axiom => Some(EntityType::Axiom),
+        Token::Framework => Some(EntityType::Framework),
+        Token::Law => Some(EntityType::Law),
+        Token::Principle => Some(EntityType::Principle),
+        Token::Concept => Some(EntityType::Concept),
+        Token::Artifact => Some(EntityType::Artifact),
+        Token::Pillar => Some(EntityType::Pillar),
+        Token::Document => Some(EntityType::Document),
+        Token::Project => Some(EntityType::Project),
+        Token::Release => Some(EntityType::Release),
+        Token::Persona => Some(EntityType::Persona),
+        Token::Collection => Some(EntityType::Collection),
+        _ => None,
+    }
+}
+
 /// Parse a token stream into a VDL AST module.
 ///
 /// # Arguments
@@ -116,20 +134,11 @@ pub fn parse(_tokens: &[(Token, Span)], _source: &str, file: &Path) -> VdlResult
 
     // -- Entity type --------------------------------------------------------
 
-    let entity_type = choice((
-        just(Token::Axiom).to(EntityType::Axiom),
-        just(Token::Framework).to(EntityType::Framework),
-        just(Token::Law).to(EntityType::Law),
-        just(Token::Principle).to(EntityType::Principle),
-        just(Token::Concept).to(EntityType::Concept),
-        just(Token::Artifact).to(EntityType::Artifact),
-        just(Token::Pillar).to(EntityType::Pillar),
-        just(Token::Document).to(EntityType::Document),
-        just(Token::Project).to(EntityType::Project),
-        just(Token::Release).to(EntityType::Release),
-        just(Token::Persona).to(EntityType::Persona),
-        just(Token::Collection).to(EntityType::Collection),
-    ));
+    let entity_type = filter_map(|span, token| {
+        legacy_entity_type(&token).ok_or_else(|| {
+            Simple::custom(span, format!("expected a legacy entity type, found '{}'", token))
+        })
+    });
 
     // -- Property -----------------------------------------------------------
 
@@ -328,6 +337,7 @@ pub fn parse(_tokens: &[(Token, Span)], _source: &str, file: &Path) -> VdlResult
     let module_parser = entity
         .repeated()
         .collect::<Vec<_>>()
+        .then_ignore(end())
         .map(|entities| Module { entities });
 
     // -- Run parser ---------------------------------------------------------
@@ -370,23 +380,17 @@ pub enum Document {
 
 /// Parse VDL source into whichever document form it declares.
 ///
-/// `schema` or `entity` as the first non-annotation token selects the schema
-/// form; anything else goes down the legacy path unchanged.
+/// Schema blocks and unambiguous schema instance syntax select the schema
+/// form. Ambiguous legacy keywords require a schema context.
 pub fn parse_document(
     tokens: &[(Token, Span)],
     source: &str,
     file: &Path,
 ) -> VdlResult<Document> {
-    let first = tokens
-        .iter()
-        .find(|(token, _)| !matches!(token, Token::Annotation(..)))
-        .map(|(token, _)| token);
-
-    match first {
-        Some(Token::Schema) | Some(Token::Entity) => {
-            schema::parse_schema_document(tokens, source, file).map(Document::Schema)
-        }
-        _ => parse(tokens, source, file).map(Document::Legacy),
+    if schema::starts_schema_document(tokens) {
+        schema::parse_schema_document(tokens, source, file).map(Document::Schema)
+    } else {
+        parse(tokens, source, file).map(Document::Legacy)
     }
 }
 

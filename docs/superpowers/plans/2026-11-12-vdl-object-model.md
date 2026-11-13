@@ -1,5 +1,9 @@
 # VDL User-Defined Object Model Implementation Plan
 
+> This document records the original object-model slice. See the
+> [current language and CLI reference](../../../README.md) for project builds,
+> composition, and syntax added since that slice.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Let a VDL author declare entity types, instantiate them with inline Markdown bodies and ordered typed references, validate the result against that schema, and compose a selected root entity into one complete Markdown document.

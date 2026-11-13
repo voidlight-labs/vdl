@@ -1,5 +1,9 @@
 # Spec: User-Defined VDL Object Model (Milestone Addendum)
 
+> This document records the original object-model slice. See the
+> [current language and CLI reference](../../../README.md) for project builds,
+> composition, and syntax added since that slice.
+
 Status: accepted 2026-11-12. Supersedes earlier VDL multi-domain milestone requirements.
 
 ## Objective

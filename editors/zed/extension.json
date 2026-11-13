@@ -1,0 +1,17 @@
+{
+  "name": "VDL",
+  "version": "0.1.0",
+  "description": "Syntax highlighting for Voidlight Definition Language.",
+  "repository": "https://github.com/voidlight-labs/vdl",
+  "authors": [
+    "Voidlight Labs"
+  ],
+  "languages": {
+    "VDL": "languages/vdl",
+    "VDL Markdown": "languages/vdl-markdown",
+    "VDL Markdown Inline": "languages/vdl-markdown-inline"
+  },
+  "grammars": {
+    "vdl": "grammars/vdl.wasm"
+  }
+}

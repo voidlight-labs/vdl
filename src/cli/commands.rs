@@ -17,6 +17,10 @@ pub struct Cli {
 #[derive(Subcommand)]
 pub enum Commands {
     /// Validate VDL files and report errors with precise locations.
+    ///
+    /// A directory that contains schema documents is validated as one project:
+    /// every `.vdl` file is merged, exactly one schema block is required, and
+    /// IDs resolve across folders without a build manifest.
     Validate {
         /// Path to a .vdl file or directory containing .vdl files.
         path: String,
@@ -24,9 +28,11 @@ pub enum Commands {
 
     /// Compile VDL files through the full pipeline.
     ///
-    /// Validates, builds the knowledge graph, and generates all output targets.
+    /// A directory with `vdl.toml` is a schema project: every registered
+    /// Markdown target is rendered, validated, and only then written. A
+    /// directory without a manifest keeps the legacy graph pipeline.
     Compile {
-        /// Path to a .vdl file or directory containing .vdl files.
+        /// Path to a .vdl file, or a project directory containing vdl.toml.
         path: String,
     },
 
@@ -61,13 +67,14 @@ pub enum Commands {
         path: String,
     },
 
-    /// Compose a schema document into one complete Markdown file.
+    /// Compose a schema document or project into one Markdown file.
     ///
-    /// The document must declare exactly one schema block and the entities it
-    /// instantiates. Composition renders the root entity, its heading and
-    /// body, then every collection marked `compose` in declared order.
+    /// The input may be one `.vdl` file or a directory of project sources; a
+    /// directory is merged exactly like `validate` and needs no manifest.
+    /// Composition renders the root entity, its heading and body, then every
+    /// collection marked `compose` in declared order.
     Compose {
-        /// Path to one .vdl schema document.
+        /// Path to one .vdl schema document or a project directory.
         path: String,
         /// Entity ID of the composition root.
         #[arg(long)]

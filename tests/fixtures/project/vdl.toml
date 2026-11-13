@@ -1,0 +1,10 @@
+[build]
+out_dir = "dist"
+
+[[build.markdown]]
+root = "deploy"
+output = "runbooks/deploy.md"
+
+[[build.markdown]]
+root = "recovery"
+output = "runbooks/recovery.md"

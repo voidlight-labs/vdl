@@ -308,7 +308,7 @@ fn test_compose_rejects_symlink_alias_of_input() {
     assert_eq!(fs::read(&input).expect("input still readable"), before);
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[test]
 fn test_compose_rejects_hard_link_alias_of_input() {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -326,6 +326,12 @@ fn test_compose_rejects_hard_link_alias_of_input() {
         link.to_str().unwrap(),
     ]);
 
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("refusing to write output over the input"),
+        "stderr: {}",
+        stderr
+    );
     assert!(!output.status.success(), "expected a nonzero exit status");
     assert_eq!(fs::read(&input).expect("input still readable"), before);
 }

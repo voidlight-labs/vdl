@@ -1,0 +1,3 @@
+name = "VDL Markdown"
+grammar = "markdown"
+hidden = true

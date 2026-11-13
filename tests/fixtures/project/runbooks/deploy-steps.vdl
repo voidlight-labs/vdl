@@ -1,0 +1,8 @@
+entity "Section" "deploy-steps" {
+    field "label" "Deploy Steps"
+    field "content" """
+Build the artifact.
+
+Publish it.
+"""
+}

@@ -1,0 +1,5 @@
+entity "Runbook" "recovery" {
+    field "label" "Recovery Runbook"
+    field "chapters" [ "recovery-steps", "intro" ]
+    field "see_also" [ "intro" ]
+}

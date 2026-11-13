@@ -1,5 +1,9 @@
 # Completion Report: VDL User-Defined Object Model
 
+> This document records the original object-model slice. See the
+> [current language and CLI reference](../../../README.md) for project builds,
+> composition, and syntax added since that slice.
+
 Date: 2026-11-12
 Spec: `docs/superpowers/specs/2026-11-12-vdl-object-model-addendum.md`
 Plan: `docs/superpowers/plans/2026-11-12-vdl-object-model.md`

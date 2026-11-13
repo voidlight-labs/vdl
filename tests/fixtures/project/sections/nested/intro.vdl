@@ -1,0 +1,6 @@
+entity "Section" "intro" {
+    field "label" "Introduction"
+    field "content" """
+Shared introduction used by every runbook.
+"""
+}

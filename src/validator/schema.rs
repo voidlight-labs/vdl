@@ -10,18 +10,18 @@
 //! | V3  | duplicate type name |
 //! | V4  | duplicate field name inside one type |
 //! | V5  | field supplied that its type does not declare |
-//! | V6  | declared field not supplied |
+//! | V6  | required field not supplied |
 //! | V7  | value shape does not match the declared field kind |
 //! | V8  | reference to an undeclared entity ID |
 //! | V9  | reference whose target entity has a different type |
 //! | V10 | `compose` on a non-`ref` field |
 //! | V11 | `heading` on a non-`text` field, or more than one `heading` per type |
-//! | V12 | composed collection whose target type declares no `heading` field |
+//! | V12 | composed target lacks the heading or body required by the composition mode |
 //! | V13 | `ref` field whose declared target type is undeclared (empty list included) |
 //! | V14 | the same field supplied twice in one instance |
 
 use crate::error::{SourceLocation, VdlError, VdlResult};
-use crate::model::{FieldKind, SchemaDoc, TypeDecl, Value};
+use crate::model::{body_include_directives, resolve_include_candidates, FieldKind, SchemaDoc, TypeDecl, Value};
 use crate::validator::error::ValidationError;
 use std::collections::HashMap;
 
@@ -39,6 +39,31 @@ pub fn collect_schema_errors(doc: &SchemaDoc) -> Vec<ValidationError> {
     errors.extend(check_composition_targets(doc));
     errors.extend(check_instances(doc));
     errors.extend(check_references(doc));
+    errors.extend(check_body_includes(doc));
+    errors
+}
+
+fn check_body_includes(doc: &SchemaDoc) -> Vec<ValidationError> {
+    let mut errors = Vec::new();
+    for instance in &doc.entities {
+        let Some(type_decl) = doc.type_decl(&instance.type_name) else { continue };
+        let Some(field) = type_decl.body_field().filter(|f| !f.compose_targets.is_empty()) else { continue };
+        let Some(Value::BracedBody(body)) = instance.value(&field.name) else { continue };
+        let value_location = instance.values.iter().find(|v| v.name == field.name).map(|v| &v.source_location).unwrap_or(&instance.source_location);
+        for (line_offset, name) in body_include_directives(body) {
+            let location = SourceLocation::new(value_location.file.clone(), value_location.line + line_offset + 1, value_location.column);
+            let candidates = resolve_include_candidates(instance, name, doc);
+            match candidates.as_slice() {
+                [id] => match doc.instance(id) {
+                    None => errors.push(violation(&location, format!("body include '{}' references missing entity '{}'", name, id))),
+                    Some(target) if !field.compose_targets.contains(&target.type_name) => errors.push(violation(&location, format!("body include '{}' has type '{}'; expected one of [{}]", name, target.type_name, field.compose_targets.join(", ")))),
+                    _ => {}
+                },
+                [] => errors.push(violation(&location, format!("body include '{}' has no matching local entity or import", name))),
+                many => errors.push(violation(&location, format!("body include '{}' is ambiguous; candidates: {}", name, many.join(", ")))),
+            }
+        }
+    }
     errors
 }
 
@@ -93,14 +118,19 @@ fn check_type_declarations(doc: &SchemaDoc) -> Vec<ValidationError> {
             }
 
             // V10
-            if field.compose && !matches!(field.kind, FieldKind::Refs { .. }) {
+            if field.compose && field.kind.reference_targets().is_none()
+                && !(matches!(field.kind, FieldKind::Body) && !field.compose_targets.is_empty()) {
+                let modifier = if field.inline { "inline" } else { "compose" };
                 errors.push(violation(
                     &field.source_location,
                     format!(
-                        "field '{}' of type '{}' is marked compose but has kind '{}'; compose applies to ref fields only",
-                        field.name, type_decl.name, field.kind
+                        "field '{}' of type '{}' is marked {} but has kind '{}'; {} applies to ref fields only",
+                        field.name, type_decl.name, modifier, field.kind, modifier
                     ),
                 ));
+            }
+            if !field.compose_targets.is_empty() && !matches!(field.kind, FieldKind::Body) {
+                errors.push(violation(&field.source_location, format!("field '{}' declares body composition targets but has kind '{}'", field.name, field.kind)));
             }
 
             // V11
@@ -116,7 +146,7 @@ fn check_type_declarations(doc: &SchemaDoc) -> Vec<ValidationError> {
 
             // V13: declared target type must exist even when no instance
             // supplies a value, so a schema typo cannot slip through.
-            if let FieldKind::Refs { target } = &field.kind {
+            for target in field.kind.reference_targets().into_iter().flatten() {
                 if doc.type_decl(target).is_none() {
                     errors.push(violation(
                         &field.source_location,
@@ -125,6 +155,11 @@ fn check_type_declarations(doc: &SchemaDoc) -> Vec<ValidationError> {
                             field.name, type_decl.name, target
                         ),
                     ));
+                }
+            }
+            for target in &field.compose_targets {
+                if doc.type_decl(target).is_none() {
+                    errors.push(violation(&field.source_location, format!("body compose field '{}' of type '{}' references undeclared target type '{}'", field.name, type_decl.name, target)));
                 }
             }
         }
@@ -172,29 +207,38 @@ fn check_type_declarations(doc: &SchemaDoc) -> Vec<ValidationError> {
     errors
 }
 
-/// V12: a composed collection's target type must declare a heading field.
-///
-/// Skipped when the target type is undeclared, because V13 already reports it.
+/// V12: a composed target type must declare the field the renderer needs.
 fn check_composition_targets(doc: &SchemaDoc) -> Vec<ValidationError> {
     let mut errors = Vec::new();
 
     for type_decl in &doc.schema.types {
         for field in type_decl.composed_fields() {
-            let target = match &field.kind {
-                FieldKind::Refs { target } => target,
-                _ => continue,
-            };
-            let Some(target_decl) = doc.type_decl(target) else {
-                continue;
-            };
-            if target_decl.heading_field().is_none() {
-                errors.push(violation(
-                    &field.source_location,
-                    format!(
-                        "field '{}' of type '{}' is composed but target type '{}' declares no heading field",
-                        field.name, type_decl.name, target
-                    ),
-                ));
+            for target in field.kind.reference_targets().into_iter().flatten() {
+                let Some(target_decl) = doc.type_decl(target) else {
+                    continue;
+                };
+                let (required, missing) = if field.inline {
+                    ("body", target_decl.body_field().is_none())
+                } else {
+                    ("heading", target_decl.heading_field().is_none())
+                };
+                if missing {
+                    errors.push(violation(
+                        &field.source_location,
+                        format!(
+                            "field '{}' of type '{}' is composed but target type '{}' declares no {} field",
+                            field.name, type_decl.name, target, required
+                        ),
+                    ));
+                }
+            }
+        }
+        for field in type_decl.fields.iter().filter(|f| !f.compose_targets.is_empty()) {
+            for target in &field.compose_targets {
+                let Some(target_decl) = doc.type_decl(target) else { continue };
+                if target_decl.heading_field().is_none() {
+                    errors.push(violation(&field.source_location, format!("body compose field '{}' target type '{}' declares no heading field", field.name, target)));
+                }
             }
         }
     }
@@ -205,14 +249,18 @@ fn check_composition_targets(doc: &SchemaDoc) -> Vec<ValidationError> {
 /// V1, V2, V5, V6, V7, V14: instance-level rules.
 fn check_instances(doc: &SchemaDoc) -> Vec<ValidationError> {
     let mut errors = Vec::new();
-    let mut seen_ids: HashMap<&str, ()> = HashMap::new();
+    let mut seen_ids: HashMap<&str, &SourceLocation> = HashMap::new();
 
     for instance in &doc.entities {
-        // V2
-        if seen_ids.insert(instance.id.as_str(), ()).is_some() {
+        // V2: report the duplicate at its own location and name the first
+        // declaration, so a project-wide duplicate names both files.
+        if let Some(first) = seen_ids.insert(instance.id.as_str(), &instance.source_location) {
             errors.push(violation(
                 &instance.source_location,
-                format!("duplicate entity ID '{}'", instance.id),
+                format!(
+                    "duplicate entity ID '{}'; first declared at {}",
+                    instance.id, first
+                ),
             ));
         }
 
@@ -262,8 +310,9 @@ fn check_instances(doc: &SchemaDoc) -> Vec<ValidationError> {
             // V7
             let shape_ok = match (&field_decl.kind, &value.value) {
                 (FieldKind::Text, Value::Text(_)) => true,
-                (FieldKind::Body, Value::Body(_)) => true,
-                (FieldKind::Refs { .. }, Value::Refs(_)) => true,
+                (FieldKind::Body, Value::Body(_) | Value::BracedBody(_)) => true,
+                (kind, Value::Refs(_)) => kind.reference_targets().is_some(),
+                (kind, Value::Inline(_)) => field_decl.inline && kind.reference_targets().is_some(),
                 _ => false,
             };
             if !shape_ok {
@@ -282,7 +331,7 @@ fn check_instances(doc: &SchemaDoc) -> Vec<ValidationError> {
 
         // V6
         for field_decl in &type_decl.fields {
-            if instance.value_count(&field_decl.name) == 0 {
+            if !field_decl.optional && instance.value_count(&field_decl.name) == 0 {
                 errors.push(violation(
                     &instance.source_location,
                     format!(
@@ -310,14 +359,10 @@ fn check_references(doc: &SchemaDoc) -> Vec<ValidationError> {
             let Some(field_decl) = type_decl.field(&value.name) else {
                 continue;
             };
-            let FieldKind::Refs { target } = &field_decl.kind else {
+            let Some(targets) = field_decl.kind.reference_targets() else {
                 continue;
             };
-            let Value::Refs(ids) = &value.value else {
-                continue;
-            };
-
-            for id in ids {
+            for id in value.value.reference_ids() {
                 match doc.instance(id) {
                     // V8
                     None => errors.push(violation(
@@ -328,14 +373,35 @@ fn check_references(doc: &SchemaDoc) -> Vec<ValidationError> {
                         ),
                     )),
                     // V9
-                    Some(referenced) if &referenced.type_name != target => {
+                    Some(referenced) if !targets.contains(&referenced.type_name) => {
+                        let expected = if let [target] = targets {
+                            format!("type '{}'", target)
+                        } else {
+                            format!("one of [{}]", targets.join(", "))
+                        };
                         errors.push(violation(
                             &value.source_location,
                             format!(
-                                "entity '{}' field '{}' expects type '{}' but '{}' is of type '{}'",
-                                instance.id, value.name, target, id, referenced.type_name
+                                "entity '{}' field '{}' expects {} but '{}' is of type '{}'",
+                                instance.id, value.name, expected, id, referenced.type_name
                             ),
                         ));
+                    }
+                    Some(referenced) if field_decl.inline => {
+                        let body = doc
+                            .type_decl(&referenced.type_name)
+                            .and_then(TypeDecl::body_field);
+                        if let Some(body) = body {
+                                if !matches!(referenced.value(&body.name), Some(Value::Body(_) | Value::BracedBody(_))) {
+                                errors.push(violation(
+                                    &value.source_location,
+                                    format!(
+                                        "entity '{}' field '{}' inlines '{}' which has no body value",
+                                        instance.id, value.name, id
+                                    ),
+                                ));
+                            }
+                        }
                     }
                     Some(_) => {}
                 }
@@ -350,7 +416,9 @@ fn describe_value(value: &Value) -> &'static str {
     match value {
         Value::Text(_) => "text",
         Value::Body(_) => "body",
+        Value::BracedBody(_) => "braced body",
         Value::Refs(_) => "ref list",
+        Value::Inline(_) => "inline list with prose",
     }
 }
 
@@ -441,6 +509,22 @@ entity "A" "same" { field "label" "one" }
 entity "A" "same" { field "label" "two" }
 "#;
         assert_single(src, "duplicate entity ID 'same'");
+    }
+
+    #[test]
+    fn v2_duplicate_entity_id_names_the_first_location() {
+        let src = r#"
+schema "s" { type "A" { field "label" text heading } }
+entity "A" "same" { field "label" "one" }
+entity "A" "same" { field "label" "two" }
+"#;
+        let msgs = messages(src);
+        assert_eq!(msgs.len(), 1, "{:?}", msgs);
+        assert!(
+            msgs[0].contains("first declared at test.vdl:"),
+            "{:?}",
+            msgs[0]
+        );
     }
 
     // -- V3 ---------------------------------------------------------------
@@ -619,6 +703,31 @@ schema "s" {
     }
 
     // -- V12 --------------------------------------------------------------
+
+    #[test]
+    fn v12_inline_target_must_declare_a_body() {
+        let source = r#"
+schema "example" {
+    type "Page" { field "items" ref ["Entry", "Pointer"] inline }
+    type "Entry" { field "content" body }
+    type "Pointer" { field "label" text heading }
+}
+"#;
+        assert_single(source, "target type 'Pointer' declares no body field");
+    }
+
+    #[test]
+    fn v12_inline_target_must_supply_its_optional_body() {
+        let source = r#"
+schema "example" {
+    type "Page" { field "items" ref "Entry" inline }
+    type "Entry" { field "content" body optional }
+}
+Page page { items [entry] }
+Entry entry {}
+"#;
+        assert_single(source, "inlines 'entry' which has no body value");
+    }
 
     #[test]
     fn v12_composed_target_without_heading_rejected() {

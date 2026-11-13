@@ -1,7 +1,7 @@
 # Agent Documentation: VDL Compiler
 
 > **For agents working on this codebase.**
-> Last updated: July 2026 | VDL Compiler v0.1
+> Last updated: November 2026 | VDL Compiler v0.1
 
 ## Quick Commands
 
@@ -13,8 +13,8 @@ cargo build --release
 # Install globally
 cargo install --path .
 
-# Test (148 unit tests + 9 CLI integration tests + 15 schema integration tests + 4 snapshot tests)
-cargo test
+# Test compiler, CLI, schema projects, snapshots, and doctests
+cargo test --locked
 
 # Run only unit tests
 cargo test --lib
@@ -38,17 +38,20 @@ Each stage is a separate module under `src/`. All stages are deterministic. The 
 **Two document forms.** Legacy entity documents run the five stages above.
 Schema documents (author-defined types) short-circuit the graph stage:
 `parse_document` → `SchemaDoc` → `validator::schema` → `codegen::compose`.
-Dispatch is positional: the first non-annotation token decides. See
-"Schema documents" below before touching the parser.
+A schema project merges fragments from every source before validation. It
+uses the schema declarations to distinguish compact instances from legacy
+declarations; see "Schema projects" before changing the parser.
 
 ```
 src/
 ├── lexer/          # Byte-oriented scanner → Token stream
-├── parser/         # chumsky 0.9 combinators → AST (Module) or SchemaDoc
+├── parser/         # chumsky 0.9 combinators → AST (Module), SchemaDoc, or SchemaFragment
 ├── model/          # SchemaDoc: user-declared types, fields, instances
+├── project/        # Recursive discovery, vdl.toml manifest, guarded Markdown build
 ├── validator/      # 6 legacy rules + 15 schema rules → VdlResult<()>
 ├── graph/          # In-memory DAG with IndexMap nodes
 ├── codegen/        # json, markdown, search, dot + compose (schema docs)
+├── fsutil.rs       # File identity: canonical anchors, device/inode, Windows file ID
 ├── cli/            # clap 4.5 commands + miette error reporting
 ├── error.rs        # VdlError enum with source locations
 ├── lib.rs          # Public library API
@@ -83,48 +86,111 @@ Each rule is a separate function returning `Vec<ValidationError>`:
 Added in the user-defined object model slice. Read this before changing the
 parser, validator, or renderer.
 
-- **Dispatch lives in `parser::parse_document`.** First non-annotation token
-  `schema` or `entity` → schema document; anything else → legacy `parse()`.
-  The legacy path is untouched, so its fixtures keep working.
-- **`SchemaDoc` is single-file by contract.** `schema` is not an `Option`:
-  zero or two `schema` blocks are parse errors (`parse_schema_document` counts
-  them before parsing).
+- **Schema instances have two spellings.** `entity "<type>" "<id>"` and
+  `Type "<id>"` produce the same model. Field values likewise accept
+  `field "<name>"` or a bare name. In a project, a bare type declared in
+  the schema can also use a legacy keyword as its name.
+- **Packages are per file.** An optional `package` header precedes any schema
+  and instances. Imports are also file-local: a one-level `import prefix.*`
+  or an explicit `import full.id as alias` resolves bare references after all
+  project entities load. Precedence is explicit alias, local package, then
+  wildcard; ambiguous and missing imports retain source locations. Bare dotted
+  and quoted IDs retain their spelling.
+- **The single-file parser requires exactly one schema.**
+  `parse_schema_document` rejects zero or two blocks. The project-facing
+  `parse_schema_fragment` also accepts files that only declare instances.
 - **Domain vocabulary is forbidden in Rust.** No comparison against `"Runbook"`,
   `"Section"`, `"sections"`, `"title"`, or `"body"` anywhere in `src/`. Heading
   is a schema flag (`FieldDecl::heading`), body is a field kind
   (`FieldKind::Body`), composition is a schema flag (`FieldDecl::compose`).
   `tests/schema_test.rs::renaming_types_needs_no_rust_change` is the guard.
-- **Composition is one level deep.** `codegen::compose` expands the root, its
-  heading and body, then every composed collection in declaration order and
-  author order. Ordinary refs go into frontmatter as YAML lists and never inline
-  a body.
-- **Body literals are raw.** `lexer::read_raw_string_literal` normalizes CRLF,
-  drops one leading newline, drops a trailing whitespace-only line, and decodes
-  UTF-8 properly. `parser::schema::dedent` strips the common indent at parse
-  time. Those are the only permitted transformations; see README for the rules.
+- **Composition follows nested collections.** `codegen::compose` expands each
+  entity's heading and body, then its composed collections in declaration order
+  and author order. An opted-in braced body (`body compose ["Type"]`) can place
+  standalone `include id` directives in its Markdown; directives are inactive
+  inside fenced code and in triple-quoted literals. Includes use the same
+  heading depth, numbering, cycle, and six-level rules. Ordinary refs go into
+  the root's frontmatter as YAML lists and never inline a body.
+- **References can list several allowed types.** `ref ["A", "B"]` keeps one
+  ordered list of IDs and validates every target against the allowed types.
+  An `inline` collection renders each referenced body and any literal
+  `prose { … }` items in order. It leaves heading depth and numbering unchanged.
+  A schema type's optional `label` is rendered before its body.
+- **Body literals are raw.** Braced and triple-quoted bodies share newline
+  normalization and parse-time dedent. The closing brace must be alone on
+  its line and aligned with the field. Bare `evidence {` retains its legacy
+  meaning; use `field "evidence" {` for a schema body with that name.
 - **Schema rules live in `validator::schema`, not the parser.** The parser
   accepts `heading` on a ref field or `compose` on a text field so that one
   located diagnostic (V10/V11) owns the message.
 - **Frontmatter is always quoted YAML.** `id`, `type`, text values, and ref IDs
-  go through `yaml_double_quoted`; author keys through `yaml_key`. `id` and
+  go through `yaml_double_quoted`; `yaml_key` also uses it for every author key.
+  Long keys use YAML's explicit key syntax. `id` and
   `type` are reserved for the compiler, and a root field that would emit under
   either name is a composition error. Do not relax this without a real YAML
   round-trip test (no YAML crate is a dependency).
-- **`compose --out` never overwrites its input.** `cli::output_aliases_input`
-  compares canonical paths plus, on Unix, device/inode. The non-Unix hard-link
-  gap is deliberate: std exposes no file identity there.
+- **`compose --out` guards project inputs before truncating.** It opens the output
+  without truncating, compares the open handle with every project source and
+  `vdl.toml`, and only then truncates. On Unix and Windows, `fsutil::same_file`
+  compares device/inode or volume serial number/file ID; other platforms use
+  canonical anchors. Hard links and symlinks are covered.
 - **Adding a schema rule:** add a function returning `Vec<ValidationError>` in
   `src/validator/schema.rs`, call it from `collect_schema_errors`, add a unit
   test named `v<N>_*`, and add the row to the README table.
 
+### Schema projects (multi-file builds)
+
+A project is a directory of `.vdl` sources with exactly one `schema` block.
+`src/project/` owns everything above the single document; read it before
+changing discovery, manifests, or output writing.
+
+- **Discovery is recursive and name-blind.** `project::discover_vdl_files`
+  sorts paths for determinism. `schema.vdl` is a convention only. File names
+  and folders never affect entity IDs.
+- **Loading merges fragments.** `project::load_schema_project` calls
+  `parse_schema_fragment` per schema-form file, collects the single schema and
+  all instances, then runs the existing `validator::schema` rules once. AST
+  locations keep each file, line, and column, so cross-file references point at
+  the usage and duplicate IDs name both declarations.
+- **Three page-level failures are explicit.** No schema block, more than one
+  schema block (all locations listed), and a project mixing schema documents
+  with legacy entity documents. A legacy-only directory keeps the old pipeline.
+- **One loader serves `validate`, `compose`, and `compile`.** `validate` and
+  `compose` accept a project directory without a manifest. `compile` uses
+  `vdl.toml` when present; a schema directory without one reports the manifest
+  example and the expected path.
+- **`vdl.toml` is parsed with `toml` and normalized.** `[build] out_dir` and
+  every `[[build.markdown]] output` are relative, normalized, and rejected when
+  they are absolute or climb out of the project. Unknown keys, missing fields,
+  and empty target lists produce a manifest-path diagnostic with an example.
+- **Markdown numbering is per target.** The optional `number_headings` boolean
+  defaults to false. The renderer uses composed sibling order and depth to
+  generate prefixes. Root headings and authored body text are unchanged.
+- **Build is plan-then-write.** `project::build_project` checks every target
+  (root exists, destination is not a directory, stays inside `out_dir` after
+  symlink resolution, does not alias a source or the manifest, does not collide
+  with another target), renders all Markdown in memory, and only then creates
+  directories and writes. Validation failures leave existing output untouched.
+  File comparisons use `fsutil::paths_alias`/`canonical_anchor`; do not add a
+  second identity implementation.
+- **Project tests carry the contract.** `tests/project_test.rs` covers the
+  compile-and-move byte comparison, cross-file diagnostics, manifest failures,
+  destination conflicts, source/manifest protection, symlinks, and hard links.
+  `tests/fixtures/project/` is the reference layout.
+
+
 ### CLI (`src/cli/`)
 - All commands accept `<path>` arg (file or directory); `graph`/`diff`/`search` default to `"."` if omitted
 - Version string uses `env!("CARGO_PKG_VERSION")` — update in `Cargo.toml` only
-- Each command is a separate function: `cmd_validate()`, `cmd_compile()`, `cmd_graph()`, `cmd_diff()`, `cmd_search()`
+- Each command is a separate function: `cmd_validate()`, `cmd_compile()`, `cmd_graph()`, `cmd_diff()`, `cmd_search()`, `cmd_compose()`
+- `validate` probes for schema form and delegates to `project::load_schema_project`; legacy directories keep the original per-file loop
+- `compile` uses `project::build_project` when the directory has `vdl.toml`, reports a missing manifest for a schema directory, and otherwise runs the legacy graph pipeline
+- `compose` always loads through the project loader; `--out` protects every project source and the manifest
 
 ### Lexer (`src/lexer/`)
 - Hand-written byte scanner (not generated)
-- Unknown bare words are hard errors (no generic `Ident` token)
+- Bare words that are not reserved keywords become identifier tokens. Schema
+  instances use them for type and field names.
 - String literal parsing extracted to `read_string_literal()` helper (shared with annotation parsing)
 - Annotations lexed as single tokens: `@name("value")`
 
@@ -157,6 +223,9 @@ Local test wrappers (e.g., `entity()`, `make_entity()`) delegate to these helper
 - `snapshot_test.rs` — uses `insta` to snapshot JSON, Markdown, Search, DOT outputs
 - `schema_test.rs` — schema document acceptance, negative cases, CRLF fidelity,
   and the rename check that proves no domain vocabulary lives in `src/`
+- `project_test.rs` — multi-file project loading, `vdl.toml` targets, the
+  compile-and-move byte comparison, cross-file diagnostics, and output guards
+  (including symlink and hard-link aliases)
 
 ### Fixtures (`tests/fixtures/`)
 - `seven_laws.vdl` — complete valid VDL: 1 framework + 7 laws with `derives_from` chains
@@ -165,6 +234,15 @@ Local test wrappers (e.g., `entity()`, `make_entity()`) delegate to these helper
 - `schema/runbooks.vdl` — schema document acceptance fixture: two runbooks sharing chapters
 - `schema/invalid_*.vdl` — unresolved reference, wrong target type, undeclared
   target type with an empty list, duplicate field value
+- `project/` — multi-file project fixture: `vdl.toml`, one schema file, two
+  runbooks in separate files, and shared sections under nested directories
+
+### Zed extension (`editors/zed/`)
+
+The local extension uses its own Tree-sitter grammar and Markdown injections.
+When surface syntax changes, update the editor grammar and queries, then parse
+the fixtures and representative project sources. See
+[`editors/zed/README.md`](editors/zed/README.md) for the build and install steps.
 
 ## Adding a New Validation Rule
 
@@ -189,16 +267,18 @@ Local test wrappers (e.g., `entity()`, `make_entity()`) delegate to these helper
 
 ### Schema documents
 
-- **All fields are required.** `optional` is not in the grammar yet.
-- **Composition is one level deep.** A composed entity cannot itself compose
-  another collection; nesting is not implemented.
 - **No scalar references.** Every `ref` is an ordered collection.
-- **One file, one schema.** Cross-file entity merging and schema distribution
-  are out of scope; `vdl compose` takes exactly one file.
+- **One schema block per project (or per single file).** Schema distribution
+  (several schema blocks combined) is out of scope. A project may span folders;
+  a single-file document still contains its own schema.
 - **No inheritance, executable methods, plugin validators, or external content
   resolvers.**
-- **Schema documents do not reach the graph.** `vdl compile`, `vdl graph`,
-  `vdl search`, and `vdl diff` still operate on legacy documents only.
+- **Schema projects produce Markdown only.** `vdl compile <dir>` with `vdl.toml`
+  renders the registered Markdown targets. `vdl graph`, `vdl search`, and
+  `vdl diff` still operate on legacy documents only; schema projects do not
+  reach the knowledge graph.
+- **No cross-project references.** Every referenced ID must be declared in the
+  same project; vault migration is out of scope.
 
 ### Legacy
 

@@ -201,7 +201,7 @@ fn renaming_types_needs_no_rust_change() {
     assert!(md.contains("type: \"Manual\""), "{}", md);
     assert!(md.contains("\n# Core Guide\n"), "{}", md);
     assert!(md.contains("## Introduction"), "{}", md);
-    assert!(md.contains("caption: \"Core Guide\""), "{}", md);
+    assert!(md.contains("\"caption\": \"Core Guide\""), "{}", md);
     assert!(md.contains("### Internal heading stays as written"), "{}", md);
 }
 
@@ -297,10 +297,6 @@ entity "Naskah" "utama" {
 
     let md = compose(&doc, "utama").unwrap();
     assert!(md.contains("# Naskah — “Kutip” ✓"), "{}", md);
-    assert!(
-        md.contains("label: \"Naskah — “Kutip” ✓\""),
-        "{}",
-        md
-    );
+    assert!(md.contains("\"label\": \"Naskah — “Kutip” ✓\""), "{}", md);
     assert!(md.contains("## Bab Satu — “Pembuka”"), "{}", md);
 }

@@ -1,0 +1,4 @@
+entity "Section" "recovery-steps" {
+    field "label" "Recovery Steps"
+    field "content" """Restore service, then verify."""
+}

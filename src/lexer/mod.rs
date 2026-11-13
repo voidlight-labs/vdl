@@ -229,6 +229,13 @@ fn read_raw_string_literal(
         )
     })?;
 
+    Ok((
+        normalize_raw_body(raw),
+        Span::new(start, *i, start_line, start_col),
+    ))
+}
+
+fn normalize_raw_body(raw: &str) -> String {
     // Rule 1: normalize line endings.
     let normalized = raw.replace("\r\n", "\n").replace('\r', "\n");
 
@@ -245,7 +252,61 @@ fn read_raw_string_literal(
         }
     }
 
-    Ok((value, Span::new(start, *i, start_line, start_col)))
+    value
+}
+
+fn braced_body_field(tokens: &[(Token, Span)], depth: usize) -> Option<&Span> {
+    if depth != 1 {
+        return None;
+    }
+    match tokens {
+        [.., (Token::Field, span), (Token::String(_), _)] => Some(span),
+        // A legacy evidence block has the same opening syntax. Its keyword
+        // still works as a schema field through the explicit field spelling.
+        [.., (token, span)] if token.word().is_some() && *token != Token::Evidence => Some(span),
+        _ => None,
+    }
+}
+
+/// A braced body ends at a line containing only a closing brace aligned with
+/// the field. All other braces belong to the raw Markdown.
+fn read_braced_body(
+    source: &str,
+    start: usize,
+    field: &Span,
+    file: &Path,
+    allow_comma: bool,
+) -> VdlResult<(String, usize)> {
+    let line_start = source[..field.start].rfind('\n').map_or(0, |i| i + 1);
+    let prefix = &source[line_start..field.start];
+    let indent = &prefix[..prefix.len() - prefix.trim_start_matches([' ', '\t']).len()];
+    let after_open = &source[start + 1..];
+    let (opening_line, rest) = after_open
+        .split_once('\n')
+        .filter(|(line, _)| line.trim_matches([' ', '\t', '\r']).is_empty())
+        .ok_or_else(|| {
+            lexer_error(file, field.line, field.column, "a braced body must start on the next line")
+        })?;
+
+    let content_start = start + 1 + opening_line.len();
+    let mut offset = content_start + 1;
+    for line in rest.split_inclusive('\n') {
+        let closing = line.strip_prefix(indent).is_some_and(|line| {
+            let line = line.trim_end_matches([' ', '\t', '\r', '\n']);
+            line == "}" || (allow_comma && line == "},")
+        });
+        if closing {
+            let end = offset + indent.len();
+            return Ok((normalize_raw_body(&source[content_start..end]), end + 1));
+        }
+        offset += line.len();
+    }
+    Err(lexer_error(
+        file,
+        field.line,
+        field.column,
+        "unterminated braced body; expected a closing brace aligned with the field",
+    ))
 }
 
 /// Tokenize VDL source code into a stream of tokens with span information.
@@ -266,6 +327,7 @@ pub fn lex(source: &str, file: &Path) -> VdlResult<Vec<(Token, Span)>> {
     let mut line = 1usize;
     let mut col = 1usize;
     let mut tokens = Vec::new();
+    let mut depth = 0usize;
 
     while i < len {
         let start = i;
@@ -388,10 +450,12 @@ pub fn lex(source: &str, file: &Path) -> VdlResult<Vec<(Token, Span)>> {
             continue;
         }
 
-        // --- Keywords and identifiers ---
-        if c.is_ascii_alphabetic() || c == b'_' {
+        // --- Keywords and names ---
+        if c.is_ascii_alphanumeric() || c == b'_' {
             let id_start = i;
-            while i < len && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+            while i < len
+                && (bytes[i].is_ascii_alphanumeric() || matches!(bytes[i], b'_' | b'-' | b'.'))
+            {
                 advance_char(bytes, &mut i, &mut line, &mut col);
             }
             let word = &source[id_start..i];
@@ -442,30 +506,52 @@ pub fn lex(source: &str, file: &Path) -> VdlResult<Vec<(Token, Span)>> {
                 "field" => Token::Field,
                 "ref" => Token::Ref,
                 "compose" => Token::Compose,
+                "inline" => Token::Inline,
+                "prose" => Token::Prose,
+                "label" => Token::Label,
                 "body" => Token::Body,
                 "heading" => Token::Heading,
+                "optional" => Token::Optional,
                 "entity" => Token::Entity,
-                // Unknown bare word → lex error
-                _ => {
-                    return Err(lexer_error(
-                        file,
-                        start_line,
-                        start_col,
-                        format!("unknown word: '{}'", word),
-                    ));
-                }
+                "package" => Token::Package,
+                "import" => Token::Import,
+                "as" => Token::As,
+                _ => Token::Identifier(word.to_owned()),
             };
             tokens.push((token, Span::new(start, i, start_line, start_col)));
             continue;
         }
 
+        // --- Braced Markdown body ---
+        if c == b'{' {
+            if let Some(field) = braced_body_field(&tokens, depth) {
+                let allow_comma = matches!(tokens.last(), Some((Token::Prose, _)));
+                let (body, end) = read_braced_body(source, i, field, file, allow_comma)?;
+                while i < end {
+                    advance_char(bytes, &mut i, &mut line, &mut col);
+                }
+                tokens.push((
+                    Token::BracedBody(body),
+                    Span::new(start, i, start_line, start_col),
+                ));
+                continue;
+            }
+        }
+
         // --- Delimiters ---
         let token = match c {
-            b'{' => Token::LBrace,
-            b'}' => Token::RBrace,
+            b'{' => {
+                depth += 1;
+                Token::LBrace
+            }
+            b'}' => {
+                depth = depth.saturating_sub(1);
+                Token::RBrace
+            }
             b'[' => Token::LBracket,
             b']' => Token::RBracket,
             b',' => Token::Comma,
+            b'*' => Token::Star,
             _ => {
                 return Err(lexer_error(
                     file,
@@ -561,6 +647,31 @@ mod tests {
     }
 
     #[test]
+    fn braced_body_normalizes_crlf_and_accepts_explicit_field_names() {
+        let source = "entity \"Page\" \"page\" {\r\n\
+                      \x20   field \"evidence\" {\r\n\
+                      \x20       Rūḥ {signal} \"\"\"\r\n\
+                      \x20   }\r\n\
+                      }";
+        let tokens = tokens(lex(source, test_file()));
+        assert!(tokens.contains(&Token::BracedBody("        Rūḥ {signal} \"\"\"".into())));
+        assert_eq!(tokens.last(), Some(&Token::RBrace));
+    }
+
+    #[test]
+    fn braced_body_reports_an_unaligned_closing_brace_at_the_field() {
+        let source = "artifact \"page\" {\n    body {\n        prose\n}";
+        let error = lex(source, test_file()).unwrap_err();
+        match error {
+            VdlError::Lexer { location, message } => {
+                assert_eq!((location.line, location.column), (2, 5));
+                assert!(message.contains("closing brace aligned with the field"));
+            }
+            other => panic!("expected lexer error, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn raw_string_unterminated_is_error() {
         let src = "\"\"\"never closed";
         assert!(matches!(
@@ -576,14 +687,6 @@ mod tests {
             tokens(lex(src, test_file())),
             vec![Token::String("Naskah — “kutip” ✓".to_string())]
         );
-    }
-
-    #[test]
-    fn unknown_bare_word_still_errors() {
-        assert!(matches!(
-            lex("wibble", test_file()),
-            Err(VdlError::Lexer { .. })
-        ));
     }
 
     // -------------------------------------------------------------------------
@@ -824,15 +927,14 @@ mod tests {
     }
 
     #[test]
-    fn error_unknown_word() {
-        let src = "foobar";
-        let err = lex(src, test_file()).unwrap_err();
-        match err {
-            VdlError::Lexer { location: _location, message } => {
-                assert!(message.contains("unknown word: 'foobar'"));
-            }
-            _ => panic!("expected lexer error"),
-        }
+    fn lexes_schema_identifiers() {
+        assert_eq!(
+            tokens(lex("includes custom_type", test_file())),
+            vec![
+                Token::Identifier("includes".into()),
+                Token::Identifier("custom_type".into()),
+            ],
+        );
     }
 
     #[test]

@@ -1,0 +1,5 @@
+entity "Runbook" "deploy" {
+    field "label" "Deploy Runbook"
+    field "chapters" [ "intro", "deploy-steps" ]
+    field "see_also" [ "intro" ]
+}

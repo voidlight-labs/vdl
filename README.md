@@ -13,20 +13,30 @@ cargo install --path .
 # 2. Validate a VDL file
 vdl validate tests/fixtures/seven_laws.vdl
 
-# 3. Compile to all output formats
+# 3. Compile a legacy document to all output formats
 vdl compile tests/fixtures/seven_laws.vdl
 # Output appears in ./output/
+
+# 4. Build a schema project using vdl.toml
+vdl compile tests/fixtures/project
+# Markdown targets appear under the project’s dist/ directory
 ```
 
 ## Overview
 
-VDL is a domain-specific language for describing, structuring, and interconnecting knowledge systems. The compiler follows a strict 5-stage pipeline:
+VDL is a domain-specific language for describing, structuring, and interconnecting knowledge systems. Legacy documents follow this pipeline:
 
 ```
 VDL Source (.vdl) → Lexer → Parser → Validator → Graph Builder → Code Generator
                                                           ↓
                                               JSON | Markdown | Search | DOT
 ```
+
+Schema projects load nested sources, resolve file-local imports, validate a
+project-wide model, and render the Markdown targets declared in `vdl.toml`.
+
+Zed syntax highlighting, including embedded Markdown, is available through
+the [local VDL extension](editors/zed/README.md).
 
 ## Installation
 
@@ -164,11 +174,28 @@ or composition target is known to the compiler ahead of time.
 
 ### Document shape
 
-One file holds exactly one `schema` block followed by its `entity` instances.
-Dispatch is positional: a file whose first non-annotation token is `schema` or
-`entity` is a schema document; anything else stays on the legacy path. Zero
-schema blocks, two schema blocks, or entities without a schema block are parse
-errors. Cross-file merging is out of scope.
+One file can hold a `schema` block followed by its instances. A schema instance
+can use either a bare type name or `entity "<type>"`. Its fields can use either
+bare names or `field "<name>"`. Both forms build the same model. Bare names
+are case-sensitive and match `[A-Za-z_][A-Za-z0-9_]*`. Use the quoted form for
+names with punctuation or spaces, or for type names that conflict with the
+`schema`, `entity`, and `package` declarations.
+
+In a project, a bare type name declared in the schema selects the schema
+grammar even if it also starts a legacy declaration, such as `framework`
+or `artifact`. Standalone schema documents start with their schema block or a package header.
+Existing legacy sources remain supported.
+
+Two layouts are supported:
+
+- **Single file** — one `.vdl` file contains the schema and all instances.
+  `vdl compose <file>` and `vdl validate <file>` keep this contract: exactly one
+  schema block, zero or two are parse errors.
+- **Project** — a directory of `.vdl` files. Exactly one file declares the
+  schema; every other file may declare only instances, anywhere in the tree.
+  See [Schema Projects](#schema-projects-multi-file-builds).
+
+`schema.vdl` is only a convention: no file name or folder is special.
 
 ```vdl
 schema "runbooks" {
@@ -184,55 +211,131 @@ schema "runbooks" {
     }
 }
 
-entity "Chapter" "intro" {
-    field "label" "Introduction"
-    field "content" """
+Chapter "intro" {
+    label "Introduction"
+    content """
     Prose starts here, no heading line.
 
     ### Internal heading stays as written
     """
 }
 
-entity "Runbook" "core-guide" {
-    field "label" "Core Guide"
-    field "chapters" [ "intro" ]
-    field "see_also" [ "appendix" ]
+Runbook "core-guide" {
+    label "Core Guide"
+    chapters ["intro"]
+    see_also ["appendix"]
 }
 ```
+
+### Packages and entity names
+
+Declare a package at the start of a schema source file, after any leading
+annotations and before any schema or instance declarations.
+
+```vdl
+package soul.alignment
+
+artifact sleep-and-death {
+    title "Sleep and Death"
+    body {
+        Prose starts here.
+    }
+}
+```
+
+The ID is `soul.alignment.sleep-and-death`. Entity declarations and reference
+lists use the same naming rules:
+
+- A bare short name is prefixed with the file's package, if declared.
+- A bare dotted name is a full ID. Use it for references to other packages.
+- A quoted ID is used as written. It retains the meaning it had before packages.
+
+Bare entity names and packages use dot-separated segments of ASCII letters,
+digits, underscores, and internal hyphens. Package names and entity IDs are
+case-sensitive. Moving a file between directories leaves its package and IDs
+intact. Manifest roots and `vdl compose --root` use the full ID.
+
+Files may import one entity with an optional alias, or direct children of a
+package with a one-level wildcard:
+
+```vdl
+import soul.human-os.*
+import soul.revelation.quran.55.33 as ar-rahman
+```
+
+Bare references resolve in this order: explicit imports (including aliases),
+the file's package, then wildcard imports. Ambiguous names report the candidate
+IDs. Without a package, a bare name can fall back to a global ID. Quoted IDs and dotted IDs keep their literal meaning.
+Import declarations are file-local, so moving a source file does not change
+its imports or entity IDs.
 
 ### Field kinds
 
 | Declaration | Value form | Meaning |
 |-------------|------------|---------|
 | `field "<name>" text` | `"..."` | Single-line quoted string |
-| `field "<name>" body` | `"""..."""` | Multiline raw Markdown, rendered verbatim |
+| `field "<name>" body` | Multiline `{ … }` or `"""..."""` | Raw Markdown |
 | `field "<name>" ref "<Type>"` | `[ "id", "id" ]` | Ordered collection of entity IDs of type `<Type>` |
+| `field "<name>" ref ["<TypeA>", "<TypeB>"]` | `[ "id", "id" ]` | Ordered collection whose IDs can have any listed type |
 
-Every `ref` is a collection; there are no scalar references in this slice. All
-declared fields are required; optional fields are not supported yet.
+Every `ref` is a collection. Declared fields are required by default.
 
 ### Modifiers
 
 - `heading` — `text` fields only, at most one per type. It names the field used
-  as that type's heading. A root entity renders it as `# ...`; a composed
-  reference renders the target's heading field as `## ...`. No heading is ever
-  inferred from a field name.
-- `compose` — `ref` fields only. Marks the collection for document composition.
+  as that type's heading. A root entity renders it as `# ...`. Each composed
+  reference increases the heading level by one. No heading is inferred from a
+  field name.
+- `compose` on a `ref` field marks the collection for document composition.
   Multiple composed fields render in declaration order, and each list renders
   in author order (never sorted).
+- `compose ["Type"]` after a `body` kind opts that braced body into heading
+  composition. A standalone `include <id>` line inserts the referenced entity
+  at that position, including its heading and body. Includes follow local
+  package and import resolution, target types are checked, and normal depth,
+  cycle, and heading-number rules apply. Fenced code stays literal; triple-
+  quoted bodies never interpret include lines. Body directives render before
+  any composed reference fields on the same entity.
+- `inline` — `ref` fields only. Emits each target's body in list order, without
+  a heading, frontmatter, or nested composition. The list can also contain
+  `prose { … }` literals between references. Inline entries do not consume
+  heading depth or heading numbers. Each referenced target must supply its body.
+- `optional` — permits an instance to omit the field. A supplied value still
+  follows the declared field kind and reference rules.
 
-A composed collection's target type must declare a heading field; this is
-validated, not guessed.
+A heading-composed target type must declare a heading field. An inline target
+type must declare a body field.
+
+A type can set a rendered body label, for example
+`type "Example" label "[EXAMPLE]" { … }`. Markdown emits that label in bold
+on its own line before the body, including when embedded through `inline`.
 
 ### Raw body literal rules
+
+A braced body starts on the line after the opening brace. Close it with a
+standalone `}` at the same indentation as the field. For a prose item in a
+list, a comma may follow the closing brace. Other braces are Markdown content.
+
+```vdl
+artifact "soul.alignment.sleep-and-death" {
+    title "Sleep and Death"
+    body {
+        Prose starts here.
+    }
+}
+```
+
+Braced bodies work for schema-defined body fields. Use the explicit
+`field "evidence" {` spelling for a schema field named `evidence`, since bare
+`evidence {` opens a legacy evidence block. Triple-quoted bodies still work.
 
 Bodies are literal, with exactly five permitted transformations. Fidelity means
 byte-identical after these:
 
 1. `\r\n` and lone `\r` are normalized to `\n`.
 2. No escape processing: `\"`, `\\` and friends stay as written.
-3. One newline immediately after the opening `"""` is dropped.
-4. A trailing whitespace-only line before the closing `"""` is dropped.
+3. One newline immediately after the opening delimiter is dropped.
+4. A trailing whitespace-only line before the closing delimiter is dropped.
 5. The longest common leading whitespace prefix across non-blank lines is
    stripped, so an indented source block does not become a Markdown code block.
 
@@ -248,14 +351,14 @@ decoded as UTF-8 and survives byte-identical.
 | V3 | duplicate type name |
 | V4 | duplicate field name inside one type |
 | V5 | field supplied that its type does not declare |
-| V6 | declared field not supplied |
+| V6 | required field not supplied |
 | V7 | value shape does not match the declared field kind |
 | V8 | reference to an undeclared entity ID |
 | V9 | reference whose target entity has a different type |
-| V10 | `compose` on a non-`ref` field |
+| V10 | Composition on an unsupported field kind |
 | V11 | `heading` on a non-`text` field, or more than one `heading` per type |
-| V12 | composed collection whose target type declares no `heading` field |
-| V13 | `ref` field whose declared target type is undeclared, empty list included |
+| V12 | composed target lacks the heading or body required by the composition mode |
+| V13 | A declared target type is missing, even when no instance references it |
 | V14 | the same field supplied twice in one instance |
 | V15 | more than one `body` field in a type, even with no instances |
 
@@ -270,8 +373,8 @@ or reference. All violations are collected, not short-circuited.
 ---
 id: "core-guide"
 type: "Runbook"
-label: "Core Guide"
-see_also:
+"label": "Core Guide"
+"see_also":
   - "appendix"
 ---
 
@@ -288,22 +391,101 @@ see_also:
 
 Frontmatter lists `id`, `type`, the root type's `text` fields in declaration
 order, then non-composed `ref` collections as YAML lists. `id`, type names, text
-values, and reference IDs are emitted as double-quoted YAML strings, so values
-like `true`, `null`, or `001` survive a YAML parser as strings. Author-defined
-keys are quoted whenever they would be ambiguous.
+values, reference IDs, and author-defined keys are emitted as double-quoted
+YAML strings. Escapes preserve control characters and Unicode line separators
+through YAML parsing.
 
 `id` and `type` are compiler-owned keys. A root field that would be emitted
 under either name is a composition error, reported before any output is
 written.
 
-Composed collections expand one level deep: each referenced entity contributes
-its heading and body. An ordinary reference contributes only its ID, never the
-target's body.
+Composed collections expand recursively. Each referenced entity contributes its
+heading and body, then its own composed collections. Nested headings increment
+one level at a time, up to Markdown's six heading levels. Composition cycles
+are errors. An ordinary reference contributes only its ID in root frontmatter.
 
-`--out` refuses to write over the input file. The check compares canonical paths
-(so relative segments and symlinks are caught) and, on Unix, device/inode
-identity (so hard links are caught too). On platforms where the standard library
-exposes no file identity, a hard-link alias is not detected.
+`--out` compares the open input and output files before truncating the output.
+On Unix it compares device and inode, and on Windows it compares volume serial
+number and file ID. Both checks catch hard links and symlinks. Other platforms
+compare canonical paths.
+
+## Schema Projects (multi-file builds)
+
+A project is any directory containing `.vdl` files with exactly one `schema`
+block. Sources are discovered recursively, including nested folders. Entity IDs
+are project-global: a file's name and location never affect resolution, and
+moving a source file does not change rendered bytes.
+
+```
+project/
+├── vdl.toml
+├── schema.vdl
+├── runbooks/
+│   ├── deploy.vdl
+│   └── recovery.vdl
+└── sections/
+    └── nested/
+        └── intro.vdl
+```
+
+`vdl validate <dir>` and `vdl compose <dir> --root <id>` merge the project
+without requiring a manifest. `vdl compile <dir>` uses the manifest:
+
+```toml
+[build]
+out_dir = "dist"
+
+[[build.markdown]]
+root = "deploy"
+output = "runbooks/deploy.md"
+
+[[build.markdown]]
+root = "recovery"
+output = "runbooks/recovery.md"
+```
+
+`root` is an entity ID. `out_dir` is relative to the project root, and each
+`output` is relative to `out_dir`. Types, fields, relationships, and the
+`heading`/`body`/`compose` rules stay in `.vdl`; the manifest only lists build
+targets.
+
+Diagnostics across the project:
+
+- exactly one schema block in the whole project; zero or several report every
+  location involved;
+- a project that mixes schema documents with legacy entity documents is
+  rejected, naming the legacy files;
+- missing and wrong-type references point at the instance that uses them, in
+  whichever file or folder it lives;
+- duplicate entity IDs name both the duplicate and the first declaration.
+
+### Heading numbering
+
+Set `number_headings = true` in a `[[build.markdown]]` entry to number that
+output's composed headings. The root title stays unnumbered. Its first child
+renders as `## 1. Title`; that child's second child renders as
+`### 1.2 Title`. Each composed level adds one segment, through H6.
+Sibling numbering follows body directives first and composed reference fields
+afterward.
+
+The default is `false`. The setting does not affect `vdl compose`, frontmatter,
+entity IDs, ordinary references, or Markdown headings written inside a body.
+
+### Build safety
+
+All targets are validated and every Markdown document is rendered in memory
+before anything is written. A build fails without touching existing output when
+a root is unknown, a destination is a directory, targets are equal or one target
+would need to be both a file and a directory, a path leaves `out_dir`, or a
+destination aliases a project source or the manifest. Paths are compared after
+resolution, so symlinked parents and hard links are covered. The resolved
+`out_dir` must remain inside the resolved project root; symlinks that stay inside
+are allowed, while symlinks that escape are rejected. Outputs whose effective
+filename ends in `.vdl` are rejected so a later build cannot parse generated
+Markdown as source. These checks apply before any output is written.
+
+`compose --out` applies the same protection to every source in the project and
+to `vdl.toml`, before truncating the output.
 
 ## CLI Usage
 
@@ -312,14 +494,19 @@ exposes no file identity, a hard-link alias is not detected.
 ### `vdl validate <file_or_dir>`
 
 Check all `.vdl` files and report errors with precise file/line/column locations.
+A directory that contains schema documents is validated as one project, even
+without `vdl.toml`; directories of legacy documents keep the per-file behavior.
 
 ```bash
 # Validate a single file
 vdl validate tests/fixtures/seven_laws.vdl
 # → ✓ Validated 1 files, 8 entities. No errors.
 
-# Validate a directory
-vdl validate tests/fixtures/
+# Validate a project directory (schema + instance files)
+vdl validate path/to/project/
+
+# Validate a directory of legacy documents
+vdl validate path/to/legacy/
 
 # Validate an invalid file (returns exit code 1)
 vdl validate tests/fixtures/invalid_cycle.vdl
@@ -329,9 +516,18 @@ vdl validate tests/fixtures/invalid_cycle.vdl
 
 ### `vdl compile <file_or_dir>`
 
-Run the full pipeline and generate all output targets in the `output/` directory.
+A directory containing `vdl.toml` is a schema project: every registered
+Markdown target is validated and rendered before the first byte is written.
+A directory without a manifest uses the legacy pipeline below.
 
 ```bash
+# Schema project
+vdl compile path/to/project/
+# →   → path/to/project/dist/runbooks/deploy.md
+# →   → path/to/project/dist/runbooks/recovery.md
+# → ✓ Compilation complete.
+
+# Legacy pipeline
 vdl compile tests/fixtures/seven_laws.vdl
 # → Found 1 VDL file(s) to compile.
 # → ✓ Validation and graph construction complete.
@@ -343,7 +539,7 @@ vdl compile tests/fixtures/seven_laws.vdl
 # → ✓ Compilation complete.
 ```
 
-Output structure:
+The legacy output structure is:
 ```
 output/
 ├── graph.json      # JSON Graph (entities + relationships + metadata)
@@ -385,16 +581,20 @@ vdl search autonomy
 # → soul.law.i | law | Autonomy Is Mandatory
 ```
 
-### `vdl compose <file> --root <entity_id> [--out <file>]`
+### `vdl compose <file_or_dir> --root <entity_id> [--out <file>]`
 
-Render a schema document into one complete Markdown file. Requires a schema
-document (one `schema` block); legacy entity files are rejected. Prints to
+Render one entity into a complete Markdown file. The input may be one `.vdl`
+schema document or a project directory; a directory is merged from all its
+sources and needs no manifest. Legacy entity files are rejected. Prints to
 stdout when `--out` is omitted.
 
 ```bash
 vdl compose tests/fixtures/schema/runbooks.vdl --root core-guide
-vdl compose tests/fixtures/schema/runbooks.vdl --root core-guide --out core-guide.md
+vdl compose path/to/project/ --root deploy --out deploy.md
 ```
+
+`--out` refuses to truncate any project source or `vdl.toml`, including aliases
+reached through symlinks or hard links.
 
 ## Architecture Overview
 
@@ -444,11 +644,20 @@ vdl/
 │   │   ├── mod.rs       # lex() implementation
 │   │   └── token.rs     # Token enum
 │   ├── parser/
-│   │   ├── mod.rs       # parse() with chumsky
+│   │   ├── mod.rs       # parse() and parse_document() with chumsky
+│   │   ├── schema.rs    # schema document / fragment parser
 │   │   └── ast.rs       # AST types (Entity, Relationship, Evidence, …)
+│   ├── model/
+│   │   └── mod.rs       # SchemaDoc, TypeDecl, Instance, Value
+│   ├── project/
+│   │   ├── mod.rs       # project module exports
+│   │   ├── loader.rs    # recursive discovery + multi-file merge
+│   │   ├── manifest.rs  # vdl.toml parsing and path checks
+│   │   └── build.rs     # target validation + Markdown build
 │   ├── validator/
 │   │   ├── mod.rs       # validate() orchestration
-│   │   ├── rules.rs     # 6 rule implementations
+│   │   ├── rules.rs     # 6 legacy rule implementations
+│   │   ├── schema.rs    # 15 schema rules
 │   │   └── error.rs     # ValidationError
 │   ├── graph/
 │   │   ├── mod.rs
@@ -456,6 +665,7 @@ vdl/
 │   │   └── query.rs     # GraphQuery (ancestors, descendants, related)
 │   ├── codegen/
 │   │   ├── mod.rs
+│   │   ├── compose.rs   # schema document → Markdown
 │   │   ├── json.rs
 │   │   ├── markdown.rs
 │   │   ├── search.rs
@@ -467,9 +677,13 @@ vdl/
 │   ├── fixtures/
 │   │   ├── seven_laws.vdl
 │   │   ├── divine_alignment.vdl
-│   │   └── invalid_cycle.vdl
+│   │   ├── invalid_cycle.vdl
+│   │   ├── schema/      # single-file schema fixtures
+│   │   └── project/     # multi-file project fixture with vdl.toml
 │   ├── snapshot/        # insta snapshot files
-│   ├── cli_test.rs      # Integration tests via cargo run
+│   ├── cli_test.rs      # CLI integration tests via cargo run
+│   ├── project_test.rs  # multi-file project and build-safety tests
+│   ├── schema_test.rs   # schema document tests
 │   └── snapshot_test.rs # insta snapshot tests
 └── README.md
 ```
@@ -482,6 +696,7 @@ vdl/
 | `clap` 4.5 | CLI with derive macros |
 | `serde` + `serde_json` | JSON serialization |
 | `thiserror` | Error type definitions |
+| `toml` 0.8 | `vdl.toml` build manifest |
 | `miette` 7.2 | Rich diagnostic reporting |
 | `indexmap` | Deterministic HashMap |
 | `regex` | Search query matching |

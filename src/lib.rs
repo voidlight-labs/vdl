@@ -32,7 +32,10 @@ pub mod graph;
 pub mod lexer;
 pub mod model;
 pub mod parser;
+pub mod project;
 pub mod validator;
+
+mod fsutil;
 
 // CLI is primarily for the binary, but exposed for library consumers who want it.
 pub mod cli;

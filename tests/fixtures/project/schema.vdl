@@ -1,0 +1,12 @@
+schema "runbooks" {
+    type "Runbook" {
+        field "label" text heading
+        field "chapters" ref "Section" compose
+        field "see_also" ref "Section"
+    }
+
+    type "Section" {
+        field "label" text heading
+        field "content" body
+    }
+}

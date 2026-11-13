@@ -2,15 +2,19 @@ pub mod commands;
 
 use crate::codegen::{dot, json, markdown, search};
 use crate::error::{VdlError, VdlResult};
+#[cfg(any(unix, windows))]
+use crate::fsutil::same_file;
 use crate::graph::{entity_type_color, KnowledgeGraph};
 use crate::lexer;
 use crate::parser;
 use crate::parser::ast::Module;
+use crate::project;
 use crate::validator;
 use miette::{miette, Result};
 use regex::Regex;
 use std::collections::{BTreeSet, HashSet};
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 // ---------------------------------------------------------------------------
@@ -75,36 +79,7 @@ fn wrap<T>(result: VdlResult<T>) -> Result<T> {
 /// * If `path` is a directory → recursively finds all `.vdl` files, sorted
 ///   for deterministic output.
 fn collect_vdl_files(path: &str) -> Result<Vec<PathBuf>> {
-    let path = Path::new(path);
-
-    if path.is_file() {
-        if path.extension().and_then(|e| e.to_str()) == Some("vdl") {
-            Ok(vec![path.to_path_buf()])
-        } else {
-            Err(miette!("Path is not a .vdl file: {}", path.display()))
-        }
-    } else if path.is_dir() {
-        let mut files = Vec::new();
-        collect_vdl_files_recursive(path, &mut files)
-            .map_err(|e| miette!("Failed to scan directory: {}", e))?;
-        files.sort();
-        Ok(files)
-    } else {
-        Err(miette!("Path does not exist: {}", path.display()))
-    }
-}
-
-fn collect_vdl_files_recursive(dir: &Path, files: &mut Vec<PathBuf>) -> std::io::Result<()> {
-    for entry in fs::read_dir(dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.is_dir() {
-            collect_vdl_files_recursive(&path, files)?;
-        } else if path.extension().and_then(|e| e.to_str()) == Some("vdl") {
-            files.push(path);
-        }
-    }
-    Ok(())
+    wrap(project::discover_vdl_files(Path::new(path)))
 }
 
 /// Read a file to string, mapping IO errors into [`VdlError::Io`].
@@ -112,56 +87,6 @@ fn read_file_to_string(path: &Path) -> VdlResult<String> {
     fs::read_to_string(path).map_err(|e| VdlError::Io {
         message: format!("Failed to read {}: {}", path.display(), e),
     })
-}
-
-/// Returns `true` when `out` resolves to the same file as `input`.
-///
-/// Canonical paths cover relative segments, `..`, and symlinks. On Unix the
-/// device/inode pair also catches hard links; on other platforms a hard link is
-/// not detected because the standard library exposes no file identity there.
-fn output_aliases_input(input: &Path, out: &Path) -> std::io::Result<bool> {
-    let input_meta = fs::metadata(input)?;
-    let input_canon = fs::canonicalize(input)?;
-
-    // Existing target: compare identity directly (hard links included on Unix).
-    if let Ok(out_meta) = fs::metadata(out) {
-        if same_file(&input_meta, &out_meta) {
-            return Ok(true);
-        }
-    }
-
-    // Nonexistent target: canonicalize the parent so `sub/../x.vdl` still matches.
-    let out_canon = match fs::canonicalize(out) {
-        Ok(path) => path,
-        Err(_) => {
-            let parent = out
-                .parent()
-                .filter(|p| !p.as_os_str().is_empty())
-                .unwrap_or_else(|| Path::new("."));
-            let Some(name) = out.file_name() else {
-                return Ok(false);
-            };
-            match fs::canonicalize(parent) {
-                Ok(parent) => parent.join(name),
-                // The target cannot be the input when its own directory does not
-                // resolve; let the write fail with the ordinary IO message.
-                Err(_) => return Ok(false),
-            }
-        }
-    };
-
-    Ok(out_canon == input_canon)
-}
-
-#[cfg(unix)]
-fn same_file(a: &fs::Metadata, b: &fs::Metadata) -> bool {
-    use std::os::unix::fs::MetadataExt;
-    a.dev() == b.dev() && a.ino() == b.ino()
-}
-
-#[cfg(not(unix))]
-fn same_file(_a: &fs::Metadata, _b: &fs::Metadata) -> bool {
-    false
 }
 
 /// Parse and validate a set of `.vdl` files, returning the merged module.
@@ -190,7 +115,6 @@ fn compile_files(files: &[PathBuf]) -> VdlResult<KnowledgeGraph> {
         message: e.to_string(),
     })
 }
-
 
 // ---------------------------------------------------------------------------
 // CLI entry point
@@ -221,27 +145,31 @@ pub fn run() -> Result<()> {
 
 /// Validate VDL files and report errors with precise locations.
 ///
-/// Each file is dispatched to its own pipeline: legacy entity documents are
-/// merged and validated together, schema documents are validated on their own
-/// because a schema document is single-file by contract.
+/// A directory containing schema documents is validated as one project: all
+/// files are merged, the single schema block is checked once, and references
+/// resolve project-wide. Directories that contain only legacy documents keep
+/// the original per-file behavior.
 fn cmd_validate(path: &str) -> Result<()> {
     let files = collect_vdl_files(path)?;
     let file_count = files.len();
 
+    if wrap(project::contains_schema_documents(Path::new(path)))? {
+        let loaded = wrap(project::load_schema_project(Path::new(path)))?;
+        println!(
+            "✓ Validated {} files, {} entities. No errors.",
+            file_count,
+            loaded.doc.entities.len()
+        );
+        return Ok(());
+    }
+
     let mut legacy_entities = Vec::new();
-    let mut schema_entity_count = 0usize;
 
     for file in &files {
         let source = wrap(read_file_to_string(file))?;
         let tokens = wrap(lexer::lex(&source, file))?;
-
-        match wrap(parser::parse_document(&tokens, &source, file))? {
-            parser::Document::Legacy(module) => legacy_entities.extend(module.entities),
-            parser::Document::Schema(doc) => {
-                wrap(validator::schema::validate_schema(&doc))?;
-                schema_entity_count += doc.entities.len();
-            }
-        }
+        let module = wrap(parser::parse(&tokens, &source, file))?;
+        legacy_entities.extend(module.entities);
     }
 
     let legacy_entity_count = legacy_entities.len();
@@ -254,58 +182,69 @@ fn cmd_validate(path: &str) -> Result<()> {
 
     println!(
         "✓ Validated {} files, {} entities. No errors.",
-        file_count,
-        legacy_entity_count + schema_entity_count
+        file_count, legacy_entity_count
     );
     Ok(())
 }
 
-/// Compose one schema document into a complete Markdown file.
+/// Compose one root entity from a schema project into Markdown.
+///
+/// The input may be one `.vdl` file or a project directory. `--out` is only
+/// opened after the whole project has loaded, and the open handle is compared
+/// with every project source and the manifest before anything is truncated.
 fn cmd_compose(path: &str, root: &str, out: Option<&Path>) -> Result<()> {
-    let files = collect_vdl_files(path)?;
-    let file = match files.as_slice() {
-        [single] => single.clone(),
-        _ => {
-            return Err(miette!(
-                "vdl compose takes exactly one .vdl schema document, found {}",
-                files.len()
-            ))
-        }
-    };
-
-    if let Some(out_path) = out {
-        if output_aliases_input(&file, out_path).map_err(|e| {
-            miette!(
-                "Failed to compare output path {} with input: {}",
-                out_path.display(),
-                e
-            )
-        })? {
-            return Err(miette!(
-                "refusing to write output over the input file '{}'",
-                file.display()
-            ));
-        }
-    }
-
-    let source = wrap(read_file_to_string(&file))?;
-    let tokens = wrap(lexer::lex(&source, &file))?;
-    let doc = match wrap(parser::parse_document(&tokens, &source, &file))? {
-        parser::Document::Schema(doc) => doc,
-        parser::Document::Legacy(_) => {
-            return Err(miette!(
-                "composition requires a schema document; '{}' uses the legacy entity form",
-                file.display()
-            ))
-        }
-    };
-
-    let markdown = wrap(crate::codegen::compose::compose(&doc, root))?;
+    let project = wrap(project::load_schema_project(Path::new(path)))?;
+    let markdown = wrap(crate::codegen::compose::compose(&project.doc, root))?;
 
     match out {
         Some(out_path) => {
-            fs::write(out_path, markdown)
-                .map_err(|e| miette!("Failed to write {}: {}", out_path.display(), e))?;
+            let write_error = |e| miette!("Failed to write {}: {}", out_path.display(), e);
+            // Compare the open files before truncating, so a path change after
+            // the check cannot redirect the write to the input.
+            let mut options = fs::OpenOptions::new();
+            options.write(true).create(true).truncate(false);
+            #[cfg(windows)]
+            {
+                use std::os::windows::fs::OpenOptionsExt;
+                use windows_sys::Win32::Storage::FileSystem::{
+                    FILE_GENERIC_WRITE, FILE_READ_ATTRIBUTES,
+                };
+
+                options.access_mode(FILE_GENERIC_WRITE | FILE_READ_ATTRIBUTES);
+            }
+            let mut output = options.open(out_path).map_err(write_error)?;
+
+            for protected in project.protected_files() {
+                #[cfg(any(unix, windows))]
+                let aliases =
+                    fs::File::open(protected).and_then(|input| same_file(&output, &input));
+                #[cfg(not(any(unix, windows)))]
+                let aliases = crate::fsutil::paths_alias(out_path, protected);
+
+                let aliases = aliases.map_err(|e| {
+                    miette!(
+                        "Failed to compare output path {} with project source '{}': {}",
+                        out_path.display(),
+                        protected.display(),
+                        e
+                    )
+                })?;
+                if aliases {
+                    if project.manifest_path.as_deref() == Some(protected) {
+                        return Err(miette!(
+                            "refusing to write output over the build manifest '{}'",
+                            protected.display()
+                        ));
+                    }
+                    return Err(miette!(
+                        "refusing to write output over the input file '{}'",
+                        protected.display()
+                    ));
+                }
+            }
+
+            output.set_len(0).map_err(write_error)?;
+            output.write_all(markdown.as_bytes()).map_err(write_error)?;
             println!("✓ Composed '{}' → {}", root, out_path.display());
         }
         None => print!("{}", markdown),
@@ -315,7 +254,26 @@ fn cmd_compose(path: &str, root: &str, out: Option<&Path>) -> Result<()> {
 }
 
 /// Compile VDL files through the full pipeline.
+///
+/// A directory with a `vdl.toml` is a schema project: its manifest targets are
+/// rendered to Markdown and nothing is written until every target passes.
+/// Directories without a manifest keep the legacy graph pipeline.
 fn cmd_compile(path: &str) -> Result<()> {
+    let target = Path::new(path);
+
+    if target.is_dir() && target.join(project::MANIFEST_FILE).is_file() {
+        let report = wrap(project::build_project(target))?;
+        for output in report.outputs {
+            println!("  → {}", output.display());
+        }
+        println!("✓ Compilation complete.");
+        return Ok(());
+    }
+
+    if target.is_dir() && wrap(project::contains_schema_documents(target))? {
+        return Err(miette!("{}", project::missing_manifest_error(target)));
+    }
+
     let files = collect_vdl_files(path)?;
     println!("Found {} VDL file(s) to compile.", files.len());
 
