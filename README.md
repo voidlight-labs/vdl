@@ -361,6 +361,7 @@ decoded as UTF-8 and survives byte-identical.
 | V13 | A declared target type is missing, even when no instance references it |
 | V14 | the same field supplied twice in one instance |
 | V15 | more than one `body` field in a type, even with no instances |
+| V16 | `cite` on a non-`ref` field |
 
 Every diagnostic carries `file:line:column` and names the offending declaration
 or reference. All violations are collected, not short-circuited.

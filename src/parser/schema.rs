@@ -38,6 +38,7 @@ enum Modifier {
     Heading,
     Compose,
     Inline,
+    Cite,
     Optional,
 }
 
@@ -329,6 +330,7 @@ pub fn parse_schema_fragment(
         just(Token::Heading).to(Modifier::Heading),
         just(Token::Compose).to(Modifier::Compose),
         just(Token::Inline).to(Modifier::Inline),
+        just(Token::Cite).to(Modifier::Cite),
         just(Token::Optional).to(Modifier::Optional),
     ));
 
@@ -345,12 +347,14 @@ pub fn parse_schema_fragment(
                 let mut heading = false;
                 let mut compose = false;
                 let mut inline = false;
+                let mut cite = false;
                 let mut optional = false;
                 for modifier in modifiers {
                     match modifier {
                         Modifier::Heading => heading = true,
                         Modifier::Compose => compose = true,
                         Modifier::Inline => inline = true,
+                        Modifier::Cite => cite = true,
                         Modifier::Optional => optional = true,
                     }
                 }
@@ -360,6 +364,7 @@ pub fn parse_schema_fragment(
                     heading,
                     compose: compose || inline,
                     inline,
+                    cite,
                     optional,
                     compose_targets: compose_targets.unwrap_or_default(),
                     source_location: span_to_location(span, source, &file),

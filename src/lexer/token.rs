@@ -62,6 +62,8 @@ pub enum Token {
     Compose,
     /// Composes referenced bodies without rendering headings.
     Inline,
+    /// Marks a ref field whose targets render as citation lines.
+    Cite,
     /// Starts a literal prose item in an inline list.
     Prose,
     /// Declares a label for a type's rendered body.
@@ -151,6 +153,7 @@ impl Token {
             Token::Ref => Some("ref"),
             Token::Compose => Some("compose"),
             Token::Inline => Some("inline"),
+            Token::Cite => Some("cite"),
             Token::Prose => Some("prose"),
             Token::Label => Some("label"),
             Token::Body => Some("body"),

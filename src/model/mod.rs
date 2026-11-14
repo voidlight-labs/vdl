@@ -103,6 +103,9 @@ pub struct FieldDecl {
     pub compose: bool,
     /// Emits each referenced body in place without rendering a heading.
     pub inline: bool,
+    /// Marks a `ref` field whose targets may render as citation lines,
+    /// per the build's cite mode.
+    pub cite: bool,
     /// Allows the field to be omitted from an instance.
     pub optional: bool,
     /// Allowed entity types for `body compose ["..."]` include directives.

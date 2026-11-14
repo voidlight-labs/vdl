@@ -19,6 +19,7 @@
 //! | V12 | composed target lacks the heading or body required by the composition mode |
 //! | V13 | `ref` field whose declared target type is undeclared (empty list included) |
 //! | V14 | the same field supplied twice in one instance |
+//! | V16 | `cite` on a non-`ref` field |
 
 use crate::error::{SourceLocation, VdlError, VdlResult};
 use crate::model::{body_include_directives, resolve_include_candidates, FieldKind, SchemaDoc, TypeDecl, Value};
@@ -139,6 +140,17 @@ fn check_type_declarations(doc: &SchemaDoc) -> Vec<ValidationError> {
                     &field.source_location,
                     format!(
                         "field '{}' of type '{}' is marked heading but has kind '{}'; heading applies to text fields only",
+                        field.name, type_decl.name, field.kind
+                    ),
+                ));
+            }
+
+            // V16
+            if field.cite && field.kind.reference_targets().is_none() {
+                errors.push(violation(
+                    &field.source_location,
+                    format!(
+                        "field '{}' of type '{}' is marked cite but has kind '{}'; cite applies to ref fields only",
                         field.name, type_decl.name, field.kind
                     ),
                 ));
@@ -700,6 +712,52 @@ schema "s" {
 }
 "#;
         assert_single(src, "declares 2 heading fields");
+    }
+
+    // -- V16 --------------------------------------------------------------
+
+    #[test]
+    fn v16_cite_on_text_rejected() {
+        let src = r#"
+schema "s" {
+    type "A" {
+        field "label" text heading
+        field "refs" text cite
+    }
+}
+"#;
+        assert_single(src, "cite applies to ref fields only");
+    }
+
+    #[test]
+    fn v16_cite_on_ref_field_accepted() {
+        let src = r#"
+schema "s" {
+    type "A" {
+        field "label" text heading
+        field "refs" ref "B" cite optional
+        field "body" body
+    }
+    type "B" {
+        field "label" text heading
+        field "body" body
+    }
+}
+entity "A" "a" {
+    label "A"
+    refs [b]
+    body {
+        isi
+    }
+}
+entity "B" "b" {
+    label "B"
+    body {
+        isi
+    }
+}
+"#;
+        assert!(messages(src).is_empty(), "{:?}", messages(src));
     }
 
     // -- V12 --------------------------------------------------------------

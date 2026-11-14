@@ -507,6 +507,7 @@ pub fn lex(source: &str, file: &Path) -> VdlResult<Vec<(Token, Span)>> {
                 "ref" => Token::Ref,
                 "compose" => Token::Compose,
                 "inline" => Token::Inline,
+                "cite" => Token::Cite,
                 "prose" => Token::Prose,
                 "label" => Token::Label,
                 "body" => Token::Body,
