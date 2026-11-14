@@ -82,5 +82,8 @@ pub enum Commands {
         /// Output file path. Prints to stdout when omitted.
         #[arg(long)]
         out: Option<PathBuf>,
+        /// How `cite`-flagged reference fields render: none, link, or short.
+        #[arg(long)]
+        cites: Option<String>,
     },
 }

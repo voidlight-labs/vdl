@@ -133,8 +133,8 @@ pub fn run() -> Result<()> {
         commands::Commands::Graph { entity_id, path } => cmd_graph(&entity_id, &path),
         commands::Commands::Diff { id, v1, v2, path } => cmd_diff(&id, &v1, &v2, &path),
         commands::Commands::Search { query, path } => cmd_search(&query, &path),
-        commands::Commands::Compose { path, root, out } => {
-            cmd_compose(&path, &root, out.as_deref())
+        commands::Commands::Compose { path, root, out, cites } => {
+            cmd_compose(&path, &root, out.as_deref(), cites.as_deref())
         }
     }
 }
@@ -192,9 +192,20 @@ fn cmd_validate(path: &str) -> Result<()> {
 /// The input may be one `.vdl` file or a project directory. `--out` is only
 /// opened after the whole project has loaded, and the open handle is compared
 /// with every project source and the manifest before anything is truncated.
-fn cmd_compose(path: &str, root: &str, out: Option<&Path>) -> Result<()> {
+fn cmd_compose(path: &str, root: &str, out: Option<&Path>, cites: Option<&str>) -> Result<()> {
     let project = wrap(project::load_schema_project(Path::new(path)))?;
-    let markdown = wrap(crate::codegen::compose::compose(&project.doc, root))?;
+    let options = crate::codegen::compose::ComposeOptions {
+        cites: match cites.map(str::trim) {
+            None | Some("") | Some("none") => crate::codegen::compose::CiteMode::None,
+            Some("link") => crate::codegen::compose::CiteMode::Link,
+            Some("short") => crate::codegen::compose::CiteMode::Short,
+            Some(other) => {
+                return Err(miette!("--cites must be one of \"none\", \"link\", \"short\"; found \"{}\"", other))
+            }
+        },
+        number_headings: false,
+    };
+    let markdown = wrap(crate::codegen::compose::compose_with_options(&project.doc, root, &options))?;
 
     match out {
         Some(out_path) => {

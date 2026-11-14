@@ -14,8 +14,32 @@
 //!
 
 use crate::error::{VdlError, VdlResult};
-use crate::model::{body_include_directives, resolve_include_candidates, InlineItem, Instance, SchemaDoc, TypeDecl, Value};
+use crate::model::{body_include_directives, resolve_include_candidates, FieldKind, InlineItem, Instance, SchemaDoc, TypeDecl, Value};
 use crate::validator::schema::validate_schema;
+
+/// How `cite`-flagged reference fields render at their cite points.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CiteMode {
+    /// Cite fields never render (default; matches the pre-flag behavior).
+    None,
+    /// Render the referenced entity IDs verbatim.
+    Link,
+    /// Render each target's heading-field text, falling back to its ID.
+    Short,
+}
+
+/// Options controlling composition output.
+#[derive(Debug, Clone, Copy)]
+pub struct ComposeOptions {
+    pub cites: CiteMode,
+    pub number_headings: bool,
+}
+
+impl Default for ComposeOptions {
+    fn default() -> Self {
+        Self { cites: CiteMode::None, number_headings: false }
+    }
+}
 
 /// Compose the document rooted at `root_id`.
 ///
@@ -25,13 +49,26 @@ use crate::validator::schema::validate_schema;
 /// [`VdlError::Codegen`] when the root or a composed target cannot be resolved
 /// or lacks a heading value, or when composition cycles or exceeds six levels.
 pub fn compose(doc: &SchemaDoc, root_id: &str) -> VdlResult<String> {
-    compose_with_numbering(doc, root_id, false)
+    compose_with_options(doc, root_id, &ComposeOptions::default())
 }
 
 pub(crate) fn compose_with_numbering(
     doc: &SchemaDoc,
     root_id: &str,
     number_headings: bool,
+) -> VdlResult<String> {
+    compose_with_options(doc, root_id, &ComposeOptions { cites: CiteMode::None, number_headings })
+}
+
+/// Compose the document rooted at `root_id` with explicit options.
+///
+/// # Errors
+///
+/// Same guarantees as [`compose`].
+pub fn compose_with_options(
+    doc: &SchemaDoc,
+    root_id: &str,
+    options: &ComposeOptions,
 ) -> VdlResult<String> {
     validate_schema(doc)?;
 
@@ -57,7 +94,8 @@ pub(crate) fn compose_with_numbering(
         root_type,
         &mut Vec::new(),
         &mut blocks,
-        number_headings.then_some(""),
+        options.number_headings.then_some(""),
+        options,
     )?;
 
     let mut output = frontmatter;
@@ -76,6 +114,7 @@ fn render_entity<'doc>(
     ancestors: &mut Vec<&'doc str>,
     blocks: &mut Vec<String>,
     section_number: Option<&str>,
+    options: &ComposeOptions,
 ) -> VdlResult<()> {
     let id = entity.id.as_str();
     if ancestors.contains(&id) {
@@ -112,18 +151,27 @@ fn render_entity<'doc>(
         }
         None => {}
     }
+    // Composed children surface their supplied non-heading text fields and
+    // `cite`-flagged references between the heading and the body. The root's
+    // text fields already live in the frontmatter, so it never emits them here.
+    let is_root = ancestors.is_empty();
     ancestors.push(id);
+    if !is_root {
+        for line in entity_preamble(doc, entity, entity_type, options) {
+            blocks.push(line);
+        }
+    }
     let mut child_index = 0;
     if let Some(body_field) = entity_type.body_field() {
         if let Some(value @ (Value::Body(_) | Value::BracedBody(_))) = entity.value(&body_field.name) {
             let body = match value { Value::Body(body) | Value::BracedBody(body) => body, _ => unreachable!() };
-            if !body.trim().is_empty() {
-                if body_field.compose_targets.is_empty() || !matches!(value, Value::BracedBody(_)) {
-                    blocks.push(labelled_body(entity_type, body));
-                } else {
-                    render_body_includes(doc, entity, entity_type, body, ancestors, blocks, section_number, &mut child_index)?;
+                if !body.trim().is_empty() {
+                    if body_field.compose_targets.is_empty() || !matches!(value, Value::BracedBody(_)) {
+                        blocks.push(labelled_body(entity_type, body));
+                    } else {
+                        render_body_includes(doc, entity, entity_type, body, ancestors, blocks, section_number, &mut child_index, options)?;
+                    }
                 }
-            }
         }
     }
     for field in entity_type.composed_fields() {
@@ -134,13 +182,13 @@ fn render_entity<'doc>(
             match value {
                 Value::Refs(ids) => {
                     for id in ids {
-                        blocks.push(inline_body(doc, id)?);
+                        blocks.push(inline_body(doc, id, options)?);
                     }
                 }
                 Value::Inline(items) => {
                     for item in items {
                         blocks.push(match item {
-                            InlineItem::Ref(id) => inline_body(doc, id)?,
+                            InlineItem::Ref(id) => inline_body(doc, id, options)?,
                             InlineItem::Prose(prose) => prose.clone(),
                         });
                     }
@@ -180,6 +228,7 @@ fn render_entity<'doc>(
                 ancestors,
                 blocks,
                 child_number.as_deref(),
+                options,
             )?;
         }
     }
@@ -190,6 +239,7 @@ fn render_entity<'doc>(
 fn render_body_includes<'doc>(
     doc: &'doc SchemaDoc, entity: &'doc Instance, entity_type: &'doc TypeDecl, body: &str,
     ancestors: &mut Vec<&'doc str>, blocks: &mut Vec<String>, section_number: Option<&str>, child_index: &mut usize,
+    options: &ComposeOptions,
 ) -> VdlResult<()> {
     if let Some(label) = &entity_type.label { blocks.push(emit_label(label)); }
     let mut prose = Vec::new();
@@ -212,25 +262,104 @@ fn render_body_includes<'doc>(
             }
             *child_index += 1;
             let number = section_number.map(|parent| if parent.is_empty() { child_index.to_string() } else { format!("{}.{}", parent, child_index) });
-            render_entity(doc, target, target_type, ancestors, blocks, number.as_deref())?;
+            render_entity(doc, target, target_type, ancestors, blocks, number.as_deref(), options)?;
         } else { prose.push(line.to_owned()); }
     }
     if !prose.join("\n").trim().is_empty() { blocks.push(prose.join("\n")); }
     Ok(())
 }
 
-fn inline_body(doc: &SchemaDoc, id: &str) -> VdlResult<String> {
+fn inline_body(doc: &SchemaDoc, id: &str, options: &ComposeOptions) -> VdlResult<String> {
     let body = doc.instance(id).and_then(|target| {
         let target_type = doc.type_decl(&target.type_name)?;
         let field = target_type.body_field()?;
         match target.value(&field.name)? {
-            Value::Body(body) | Value::BracedBody(body) => Some(labelled_body(target_type, body)),
+            Value::Body(body) | Value::BracedBody(body) => Some(render_inline_entity(doc, target, target_type, body, options)),
             _ => None,
         }
     });
     body.ok_or_else(|| VdlError::Codegen {
         message: format!("inline entity '{}' has no body value", id),
     })
+}
+
+/// Render one inline-referenced entity: label, then its supplied non-heading
+/// text fields and `cite`-flagged reference lines, then the body.
+fn render_inline_entity<'doc>(
+    doc: &'doc SchemaDoc,
+    entity: &'doc Instance,
+    entity_type: &'doc TypeDecl,
+    body: &str,
+    options: &ComposeOptions,
+) -> String {
+    let mut out = String::new();
+    if let Some(label) = &entity_type.label {
+        out.push_str(&emit_label(label));
+        out.push_str("\n\n");
+    }
+    let preamble = entity_preamble(doc, entity, entity_type, options);
+    if !preamble.is_empty() {
+        out.push_str(&preamble.join("\n\n"));
+        out.push_str("\n\n");
+    }
+    out.push_str(body);
+    out
+}
+
+/// Metadata lines rendered between the label and the body: each supplied
+/// non-heading text field, then one `Cites:` line per `cite`-flagged ref field.
+fn entity_preamble<'doc>(
+    doc: &'doc SchemaDoc,
+    entity: &'doc Instance,
+    entity_type: &'doc TypeDecl,
+    options: &ComposeOptions,
+) -> Vec<String> {
+    let mut lines = Vec::new();
+    for field in &entity_type.fields {
+        if field.heading || !matches!(field.kind, FieldKind::Text) {
+            continue;
+        }
+        if let Some(Value::Text(value)) = entity.value(&field.name) {
+            if !value.trim().is_empty() {
+                lines.push(format!("**{}:** {}", field.name, value));
+            }
+        }
+    }
+    for field in &entity_type.fields {
+        if !field.cite || options.cites == CiteMode::None {
+            continue;
+        }
+        let Some(Value::Refs(ids)) = entity.value(&field.name) else { continue };
+        if ids.is_empty() {
+            continue;
+        }
+        let rendered = ids
+            .iter()
+            .map(|id| cite_target(doc, id, options.cites))
+            .collect::<Vec<_>>()
+            .join(", ");
+        lines.push(format!("**Cites:** {}", rendered));
+    }
+    lines
+}
+
+/// How one cited target renders: its heading-field text in short mode, its ID
+/// otherwise. Unresolved or heading-less targets fall back to the ID.
+fn cite_target(doc: &SchemaDoc, id: &str, mode: CiteMode) -> String {
+    match mode {
+        CiteMode::Link | CiteMode::None => id.to_owned(),
+        CiteMode::Short => {
+            let Some(instance) = doc.instance(id) else { return id.to_owned() };
+            let Some(type_decl) = doc.type_decl(&instance.type_name) else { return id.to_owned() };
+            type_decl
+                .heading_field()
+                .and_then(|field| match instance.value(&field.name) {
+                    Some(Value::Text(text)) if !text.trim().is_empty() => Some(text.clone()),
+                    _ => None,
+                })
+                .unwrap_or_else(|| id.to_owned())
+        }
+    }
 }
 
 fn labelled_body(entity_type: &TypeDecl, body: &str) -> String {
@@ -439,6 +568,97 @@ entity "Runbook" "ops-guide" {
         let md = render("core-guide");
         assert!(md.contains("## Introduction"));
         assert!(md.contains("## Rules"));
+    }
+
+    fn compose_with(source: &str, options: &ComposeOptions) -> String {
+        compose_with_options(&doc(source), "doc", options).expect("composition should succeed")
+    }
+
+    const CITE_DOC: &str = r#"
+schema "cites" {
+    type "Verse" label "REVELATION" {
+        field "cites" ref "Ref" cite optional
+        field "body" body
+    }
+    type "Ref" {
+        field "title" text heading
+        field "body" body
+    }
+    type "Note" label "AUDIT NOTE" {
+        field "auditor" text optional
+        field "date" text
+        field "body" body
+    }
+    type "Doc" {
+        field "title" text heading
+        field "steps" ref ["Verse", "Note"] inline optional
+    }
+}
+entity "Ref" "r1" {
+    title "HR. Muslim no. 2653 (Kitab al-Qadar)"
+    body {
+        matn rujukan
+    }
+}
+entity "Verse" "v1" {
+    cites [r1]
+    body {
+        kutipan ayat
+    }
+}
+entity "Note" "n1" {
+    auditor "sanad-auditor"
+    date "2026-11-14"
+    body {
+        isi catatan
+    }
+}
+entity "Doc" "doc" {
+    title "Dokumen"
+    steps [v1, n1]
+}
+"#;
+
+    #[test]
+    fn cite_mode_none_renders_no_cite_lines() {
+        let md = compose_with(CITE_DOC, &ComposeOptions::default());
+        assert!(!md.contains("**Cites:**"), "{}", md);
+        assert!(md.contains("kutipan ayat"), "{}", md);
+    }
+
+    #[test]
+    fn cite_mode_link_renders_target_ids() {
+        let md = compose_with(CITE_DOC, &ComposeOptions { cites: CiteMode::Link, number_headings: false });
+        assert!(md.contains("**Cites:** r1"), "{}", md);
+    }
+
+    #[test]
+    fn cite_mode_short_renders_target_headings() {
+        let md = compose_with(CITE_DOC, &ComposeOptions { cites: CiteMode::Short, number_headings: false });
+        assert!(
+            md.contains("**Cites:** HR. Muslim no. 2653 (Kitab al-Qadar)"),
+            "{}",
+            md
+        );
+    }
+
+    #[test]
+    fn inline_entities_render_supplied_text_fields_as_metadata() {
+        let md = compose_with(CITE_DOC, &ComposeOptions::default());
+        assert!(md.contains("**auditor:** sanad-auditor"), "{}", md);
+        assert!(md.contains("**date:** 2026-11-14"), "{}", md);
+        // The cite-carrying Verse supplies no text fields, so nothing extra
+        // appears beyond its label and cite line.
+        assert!(!md.contains("**auditor:** sanad-auditor\n\n#### "), "{}", md);
+    }
+
+    #[test]
+    fn cite_lines_render_between_label_and_body() {
+        let md = compose_with(CITE_DOC, &ComposeOptions { cites: CiteMode::Link, number_headings: false });
+        let label_pos = md.find("**REVELATION**").unwrap();
+        let cite_pos = md.find("**Cites:**").unwrap();
+        let body_pos = md.find("kutipan ayat").unwrap();
+        assert!(label_pos < cite_pos && cite_pos < body_pos, "{}", md);
     }
 
     #[test]

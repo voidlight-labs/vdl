@@ -6,7 +6,7 @@
 //! another target. A validation failure therefore leaves existing output
 //! untouched.
 
-use crate::codegen::compose::compose_with_numbering;
+use crate::codegen::compose::{compose_with_options, ComposeOptions};
 use crate::error::{VdlError, VdlResult};
 use crate::fsutil::{canonical_anchor, paths_alias};
 use std::fs;
@@ -337,10 +337,14 @@ pub fn build_project(root: &Path) -> VdlResult<BuildReport> {
             }
         }
 
-        let markdown = compose_with_numbering(&project.doc, &target.root, target.number_headings)
-            .map_err(|e| VdlError::Other {
-                message: format!("{} root '{}': {}", label, target.root, e),
-            })?;
+        let markdown = compose_with_options(
+            &project.doc,
+            &target.root,
+            &ComposeOptions { cites: target.cites, number_headings: target.number_headings },
+        )
+        .map_err(|e| VdlError::Other {
+            message: format!("{} root '{}': {}", label, target.root, e),
+        })?;
         rendered.push(PlannedTarget {
             destination,
             anchor: destination_anchor,

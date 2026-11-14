@@ -7,12 +7,17 @@
 //! [[build.markdown]]
 //! root = "deploy"
 //! output = "runbooks/deploy.md"
+//! cites = "short"
 //! ```
 //!
 //! `root` is an entity ID; `output` is relative to `out_dir`, and `out_dir` is
 //! relative to the project root. Paths are normalized and checked here so the
 //! build never has to guess whether a target can leave the output directory.
+//! The optional per-target `cites` key (`none`, `link`, `short`; default
+//! `none`) chooses how `cite`-flagged reference fields render at their cite
+//! points; `short` renders each target's heading-field text, `link` its ID.
 
+use crate::codegen::compose::CiteMode;
 use crate::error::{VdlError, VdlResult};
 use serde::Deserialize;
 use std::fmt::Display;
@@ -49,6 +54,8 @@ pub struct MarkdownTarget {
     pub output: PathBuf,
     /// Prefix composed headings with their position in this output.
     pub number_headings: bool,
+    /// How `cite`-flagged reference fields render at their cite points.
+    pub cites: CiteMode,
 }
 
 #[derive(Deserialize)]
@@ -71,6 +78,23 @@ struct RawTarget {
     output: Option<String>,
     #[serde(default)]
     number_headings: bool,
+    #[serde(default)]
+    cites: Option<String>,
+}
+
+/// Map the manifest's `cites` key onto [`CiteMode`], rejecting unknown values
+/// with a manifest-path diagnostic that names the allowed ones.
+fn parse_cite_mode(raw: Option<&str>, label: &str, path: &Path) -> VdlResult<CiteMode> {
+    match raw.map(str::trim) {
+        None | Some("") => Ok(CiteMode::None),
+        Some("none") => Ok(CiteMode::None),
+        Some("link") => Ok(CiteMode::Link),
+        Some("short") => Ok(CiteMode::Short),
+        Some(other) => Err(invalid(
+            path,
+            format!("{} cites must be one of \"none\", \"link\", \"short\"; found \"{}\"", label, other),
+        )),
+    }
 }
 
 fn invalid(path: &Path, detail: impl Display) -> VdlError {
@@ -165,11 +189,13 @@ pub fn load_manifest(root: &Path) -> VdlResult<Option<Manifest>> {
             }
         };
         let output = relative_path(&raw_output, &format!("{} output", label), &path, false)?;
+        let cites = parse_cite_mode(target.cites.as_deref(), &label, &path)?;
 
         markdown.push(MarkdownTarget {
             root,
             output,
             number_headings: target.number_headings,
+            cites,
         });
     }
 
