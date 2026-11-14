@@ -191,7 +191,7 @@ fn render_body_includes<'doc>(
     doc: &'doc SchemaDoc, entity: &'doc Instance, entity_type: &'doc TypeDecl, body: &str,
     ancestors: &mut Vec<&'doc str>, blocks: &mut Vec<String>, section_number: Option<&str>, child_index: &mut usize,
 ) -> VdlResult<()> {
-    if let Some(label) = &entity_type.label { blocks.push(format!("**{}**", label)); }
+    if let Some(label) = &entity_type.label { blocks.push(emit_label(label)); }
     let mut prose = Vec::new();
     let directives = body_include_directives(body).into_iter().map(|(line, id)| (line, id.to_owned())).collect::<std::collections::HashMap<_, _>>();
     for (line_index, line) in body.lines().enumerate() {
@@ -235,9 +235,16 @@ fn inline_body(doc: &SchemaDoc, id: &str) -> VdlResult<String> {
 
 fn labelled_body(entity_type: &TypeDecl, body: &str) -> String {
     match &entity_type.label {
-        Some(label) => format!("**{}**\n\n{}", label, body),
+        Some(label) => format!("{}\n\n{}", emit_label(label), body),
         None => body.to_owned(),
     }
+}
+
+/// A schema type's `label` renders before its body. Plain labels are bold
+/// text; a label that starts with `#` is authored Markdown (a heading) and is
+/// emitted verbatim so it keeps its level and anchor.
+fn emit_label(label: &str) -> String {
+    if label.trim_start().starts_with('#') { label.to_owned() } else { format!("**{}**", label) }
 }
 
 fn render_frontmatter(root: &Instance, root_type: &TypeDecl) -> VdlResult<String> {
@@ -432,6 +439,53 @@ entity "Runbook" "ops-guide" {
         let md = render("core-guide");
         assert!(md.contains("## Introduction"));
         assert!(md.contains("## Rules"));
+    }
+
+    #[test]
+    fn heading_labels_render_verbatim_and_plain_labels_stay_bold() {
+        let label = "#### REVELATION";
+        let src = r#"
+schema "labels" {
+    type "Step" label "HEADING_PLACEHOLDER" {
+        field "title" text heading
+        field "body" body
+    }
+    type "Note" label "SYNTHESIS" {
+        field "title" text heading
+        field "body" body
+    }
+    type "Doc" {
+        field "title" text heading
+        field "steps" ref "Step" inline optional
+        field "notes" ref "Note" inline optional
+    }
+}
+entity "Step" "s1" {
+    title "S1"
+    body {
+        isi langkah
+    }
+}
+entity "Note" "n1" {
+    title "N1"
+    body {
+        isi catatan
+    }
+}
+entity "Doc" "doc" {
+    title "Dokumen"
+    steps [s1]
+    notes [n1]
+}
+"#.replace("HEADING_PLACEHOLDER", label);
+        let file = Path::new("labels.vdl");
+        let tokens = crate::lexer::lex(&src, file).expect("lexing should succeed");
+        let doc = crate::parser::schema::parse_schema_document(&tokens, &src, file)
+            .expect("parsing should succeed");
+        let md = compose(&doc, "doc").expect("composition should succeed");
+        assert!(md.contains("\n#### REVELATION\n"), "{}", md);
+        assert!(!md.contains("**#### REVELATION**"), "{}", md);
+        assert!(md.contains("**SYNTHESIS**"), "{}", md);
     }
 
     #[test]
