@@ -6,7 +6,7 @@
 
 ```bash
 # 1. Install
-git clone https://github.com/voidlight-labs/vdl
+git clone https://github.com/aria-voidlight/vdl
 cd vdl
 cargo install --path .
 
@@ -51,7 +51,7 @@ This is the easiest way to use `vdl` from anywhere on your system.
 
 ```bash
 # Clone the repository
-git clone https://github.com/voidlight-labs/vdl
+git clone https://github.com/aria-voidlight/vdl
 cd vdl
 
 # Install the release binary to ~/.cargo/bin
@@ -300,6 +300,9 @@ Every `ref` is a collection. Declared fields are required by default.
   a heading, frontmatter, or nested composition. The list can also contain
   `prose { … }` literals between references. Inline entries do not consume
   heading depth or heading numbers. Each referenced target must supply its body.
+- `cite` — `ref` fields only (validated by V16). Marks the collection as a
+  citation list that the cite renderer can rewrite at render time. Non-`cite`
+  reference fields are never touched by cite rendering.
 - `optional` — permits an instance to omit the field. A supplied value still
   follows the declared field kind and reference rules.
 
@@ -307,8 +310,11 @@ A heading-composed target type must declare a heading field. An inline target
 type must declare a body field.
 
 A type can set a rendered body label, for example
-`type "Example" label "[EXAMPLE]" { … }`. Markdown emits that label in bold
-on its own line before the body, including when embedded through `inline`.
+`type "Example" label "[EXAMPLE]" { … }` or
+`type "Revelation" label "#### REVELATION" { … }`. A label that starts with
+`#` is emitted verbatim on its own line (a Markdown heading); any other label
+is emitted in bold. Both forms render before the body, including when
+embedded through `inline`.
 
 ### Raw body literal rules
 
@@ -582,7 +588,7 @@ vdl search autonomy
 # → soul.law.i | law | Autonomy Is Mandatory
 ```
 
-### `vdl compose <file_or_dir> --root <entity_id> [--out <file>]`
+### `vdl compose <file_or_dir> --root <entity_id> [--out <file>] [--cites <mode>]`
 
 Render one entity into a complete Markdown file. The input may be one `.vdl`
 schema document or a project directory; a directory is merged from all its
@@ -596,6 +602,19 @@ vdl compose path/to/project/ --root deploy --out deploy.md
 
 `--out` refuses to truncate any project source or `vdl.toml`, including aliases
 reached through symlinks or hard links.
+
+### Cite rendering (`--cites`, manifest `cites`)
+
+A `cite`-marked `ref` field can be rewritten at render time into a citation
+line. The mode comes from `--cites <mode>` on `vdl compose`, or from a
+`cites = "none|link|short"` key on a `[[build.markdown]]` manifest entry
+(`compose` defaults to `none`). Rendered modes emit a `**Cites:** ...` line
+after the entity's label and before its body: `link` lists full entity IDs,
+`short` lists each target's heading field value (falling back to the full ID
+when the target has no heading). Inline entities also render their populated
+text fields as `**field:** value` metadata lines between label and body
+(the root entity keeps text fields in frontmatter instead). With `none` —
+the default — output is byte-identical to the pre-cite behavior.
 
 ## Architecture Overview
 
@@ -658,7 +677,7 @@ vdl/
 │   ├── validator/
 │   │   ├── mod.rs       # validate() orchestration
 │   │   ├── rules.rs     # 6 legacy rule implementations
-│   │   ├── schema.rs    # 15 schema rules
+│   │   ├── schema.rs    # 16 schema rules
 │   │   └── error.rs     # ValidationError
 │   ├── graph/
 │   │   ├── mod.rs
