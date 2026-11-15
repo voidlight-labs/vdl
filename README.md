@@ -6,7 +6,7 @@
 
 ```bash
 # 1. Install
-git clone https://github.com/aria-voidlight/vdl
+git clone https://github.com/voidlight-labs/vdl
 cd vdl
 cargo install --path .
 
@@ -51,7 +51,7 @@ This is the easiest way to use `vdl` from anywhere on your system.
 
 ```bash
 # Clone the repository
-git clone https://github.com/aria-voidlight/vdl
+git clone https://github.com/voidlight-labs/vdl
 cd vdl
 
 # Install the release binary to ~/.cargo/bin
