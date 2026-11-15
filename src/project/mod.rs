@@ -11,9 +11,7 @@ mod loader;
 mod manifest;
 
 pub use build::{build_project, BuildReport};
-pub use loader::{
-    contains_schema_documents, discover_vdl_files, load_schema_project, SchemaProject,
-};
+pub use loader::{discover_vdl_files, load_schema_project, SchemaProject};
 pub(crate) use loader::resolve_import_references;
 pub use manifest::{
     load_manifest, missing_manifest_error, Manifest, MarkdownTarget, MANIFEST_FILE,

@@ -52,6 +52,7 @@ pub fn compose(doc: &SchemaDoc, root_id: &str) -> VdlResult<String> {
     compose_with_options(doc, root_id, &ComposeOptions::default())
 }
 
+#[cfg(test)]
 pub(crate) fn compose_with_numbering(
     doc: &SchemaDoc,
     root_id: &str,

@@ -1,53 +1,11 @@
 /// A lexical token in VDL source code.
 ///
 /// The lexer produces a stream of these tokens, which the parser consumes
-/// to build the AST. Keywords retain their own tokens for the legacy grammar.
+/// to build the schema model.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Token {
-    // --- Entity type keywords ---
-    Axiom,
-    Framework,
-    Law,
-    Principle,
-    Concept,
-    Artifact,
-    Pillar,
-    Document,
-    Project,
-    Release,
-    Persona,
-    Collection,
-
-    // --- Property keywords ---
-    Version,
-    Title,
-    Description,
-    Previous,
-
-    // --- Relationship keywords ---
-    Requires,
-    Enables,
-    References,
-    BasedOn,
-    DerivesFrom,
-    Implements,
-    InspiredBy,
-    EvolvedFrom,
-    Contradicts,
-
-    // --- Evidence keywords ---
-    Evidence,
-    Revelation,
-    Synthesis,
-    Analogy,
-    // Evidence property keywords
-    Source,
+    /// Text field kind.
     Text,
-    Translator,
-    Sources,
-    Argument,
-    Domain,
-    Mapping,
 
     // --- Schema document keywords ---
     /// Starts a `schema "<name>" { ... }` document block.
@@ -94,11 +52,6 @@ pub enum Token {
     /// Raw Markdown read from a braced field body (distinct for include parsing).
     BracedBody(String),
 
-    // --- Annotations ---
-    /// An annotation token: `@name("value")`.
-    /// The first string is the annotation name, the second is its value.
-    Annotation(String, String),
-
     // --- Delimiters ---
     LBrace,
     RBrace,
@@ -111,42 +64,7 @@ impl Token {
     /// The original spelling of a bare name, including keyword spellings.
     pub(crate) fn word(&self) -> Option<&str> {
         match self {
-            Token::Axiom => Some("axiom"),
-            Token::Framework => Some("framework"),
-            Token::Law => Some("law"),
-            Token::Principle => Some("principle"),
-            Token::Concept => Some("concept"),
-            Token::Artifact => Some("artifact"),
-            Token::Pillar => Some("pillar"),
-            Token::Document => Some("document"),
-            Token::Project => Some("project"),
-            Token::Release => Some("release"),
-            Token::Persona => Some("persona"),
-            Token::Collection => Some("collection"),
-            Token::Version => Some("version"),
-            Token::Title => Some("title"),
-            Token::Description => Some("description"),
-            Token::Previous => Some("previous"),
-            Token::Requires => Some("requires"),
-            Token::Enables => Some("enables"),
-            Token::References => Some("references"),
-            Token::BasedOn => Some("based_on"),
-            Token::DerivesFrom => Some("derives_from"),
-            Token::Implements => Some("implements"),
-            Token::InspiredBy => Some("inspired_by"),
-            Token::EvolvedFrom => Some("evolved_from"),
-            Token::Contradicts => Some("contradicts"),
-            Token::Evidence => Some("evidence"),
-            Token::Revelation => Some("revelation"),
-            Token::Synthesis => Some("synthesis"),
-            Token::Analogy => Some("analogy"),
-            Token::Source => Some("source"),
             Token::Text => Some("text"),
-            Token::Translator => Some("translator"),
-            Token::Sources => Some("sources"),
-            Token::Argument => Some("argument"),
-            Token::Domain => Some("domain"),
-            Token::Mapping => Some("mapping"),
             Token::Schema => Some("schema"),
             Token::Type => Some("type"),
             Token::Field => Some("field"),
@@ -179,7 +97,6 @@ impl std::fmt::Display for Token {
             Token::String(s) => write!(f, "{:?}", s),
             Token::RawString(s) => write!(f, "{:?}", s),
             Token::BracedBody(s) => write!(f, "{:?}", s),
-            Token::Annotation(name, value) => write!(f, "@{}({:?})", name, value),
             Token::LBrace => write!(f, "{{"),
             Token::RBrace => write!(f, "}}"),
             Token::LBracket => write!(f, "["),

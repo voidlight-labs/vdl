@@ -261,9 +261,7 @@ fn braced_body_field(tokens: &[(Token, Span)], depth: usize) -> Option<&Span> {
     }
     match tokens {
         [.., (Token::Field, span), (Token::String(_), _)] => Some(span),
-        // A legacy evidence block has the same opening syntax. Its keyword
-        // still works as a schema field through the explicit field spelling.
-        [.., (token, span)] if token.word().is_some() && *token != Token::Evidence => Some(span),
+        [.., (token, span)] if token.word().is_some() => Some(span),
         _ => None,
     }
 }
@@ -398,56 +396,9 @@ pub fn lex(source: &str, file: &Path) -> VdlResult<Vec<(Token, Span)>> {
             continue;
         }
 
-        // --- Annotation: @identifier("value") ---
+        // Annotations belonged to the removed fixed-type form.
         if c == b'@' {
-            advance_char(bytes, &mut i, &mut line, &mut col); // consume '@'
-            let name_start = i;
-            if i >= len || !(bytes[i].is_ascii_alphabetic() || bytes[i] == b'_') {
-                return Err(lexer_error(file, line, col, "expected identifier after @"));
-            }
-            while i < len && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
-                advance_char(bytes, &mut i, &mut line, &mut col);
-            }
-            let name = String::from_utf8_lossy(&bytes[name_start..i]).into_owned();
-
-            // Expect '('
-            if i >= len || bytes[i] != b'(' {
-                return Err(lexer_error(
-                    file,
-                    line,
-                    col,
-                    format!("expected '(' after @ {}", name),
-                ));
-            }
-            advance_char(bytes, &mut i, &mut line, &mut col);
-
-            // Expect string literal
-            if i >= len || bytes[i] != b'"' {
-                return Err(lexer_error(
-                    file,
-                    line,
-                    col,
-                    "expected string literal in annotation",
-                ));
-            }
-            let (value, _) = read_string_literal(bytes, &mut i, &mut line, &mut col, file)?;
-
-            // Expect ')'
-            if i >= len || bytes[i] != b')' {
-                return Err(lexer_error(
-                    file,
-                    line,
-                    col,
-                    format!("expected ')' after string in @ {}", name),
-                ));
-            }
-            advance_char(bytes, &mut i, &mut line, &mut col);
-
-            tokens.push((
-                Token::Annotation(name, value),
-                Span::new(start, i, start_line, start_col),
-            ));
-            continue;
+            return Err(lexer_error(file, start_line, start_col, "legacy form is no longer supported; migrate annotations to schema fields"));
         }
 
         // --- Keywords and names ---
@@ -460,46 +411,7 @@ pub fn lex(source: &str, file: &Path) -> VdlResult<Vec<(Token, Span)>> {
             }
             let word = &source[id_start..i];
             let token = match word {
-                // Entity type keywords
-                "axiom" => Token::Axiom,
-                "framework" => Token::Framework,
-                "law" => Token::Law,
-                "principle" => Token::Principle,
-                "concept" => Token::Concept,
-                "artifact" => Token::Artifact,
-                "pillar" => Token::Pillar,
-                "document" => Token::Document,
-                "project" => Token::Project,
-                "release" => Token::Release,
-                "persona" => Token::Persona,
-                "collection" => Token::Collection,
-                // Property keywords
-                "version" => Token::Version,
-                "title" => Token::Title,
-                "description" => Token::Description,
-                "previous" => Token::Previous,
-                // Relationship keywords
-                "requires" => Token::Requires,
-                "enables" => Token::Enables,
-                "references" => Token::References,
-                "based_on" => Token::BasedOn,
-                "derives_from" => Token::DerivesFrom,
-                "implements" => Token::Implements,
-                "inspired_by" => Token::InspiredBy,
-                "evolved_from" => Token::EvolvedFrom,
-                "contradicts" => Token::Contradicts,
-                // Evidence keywords
-                "evidence" => Token::Evidence,
-                "revelation" => Token::Revelation,
-                "synthesis" => Token::Synthesis,
-                "analogy" => Token::Analogy,
-                "source" => Token::Source,
                 "text" => Token::Text,
-                "translator" => Token::Translator,
-                "sources" => Token::Sources,
-                "argument" => Token::Argument,
-                "domain" => Token::Domain,
-                "mapping" => Token::Mapping,
                 // Schema document keywords
                 "schema" => Token::Schema,
                 "type" => Token::Type,
@@ -691,90 +603,6 @@ mod tests {
     }
 
     // -------------------------------------------------------------------------
-    // Keyword coverage
-    // -------------------------------------------------------------------------
-    #[test]
-    fn entity_keywords() {
-        let src = "axiom framework law principle concept artifact pillar document project release persona collection";
-        assert_eq!(
-            tokens(lex(src, test_file())),
-            vec![
-                Token::Axiom,
-                Token::Framework,
-                Token::Law,
-                Token::Principle,
-                Token::Concept,
-                Token::Artifact,
-                Token::Pillar,
-                Token::Document,
-                Token::Project,
-                Token::Release,
-                Token::Persona,
-                Token::Collection,
-            ]
-        );
-    }
-
-    #[test]
-    fn property_keywords() {
-        let src = "version title description previous";
-        assert_eq!(
-            tokens(lex(src, test_file())),
-            vec![Token::Version, Token::Title, Token::Description, Token::Previous,]
-        );
-    }
-
-    #[test]
-    fn relationship_keywords() {
-        let src = "requires enables references based_on derives_from implements inspired_by evolved_from contradicts";
-        assert_eq!(
-            tokens(lex(src, test_file())),
-            vec![
-                Token::Requires,
-                Token::Enables,
-                Token::References,
-                Token::BasedOn,
-                Token::DerivesFrom,
-                Token::Implements,
-                Token::InspiredBy,
-                Token::EvolvedFrom,
-                Token::Contradicts,
-            ]
-        );
-    }
-
-    #[test]
-    fn evidence_keywords() {
-        let src = "evidence revelation synthesis analogy source text translator sources argument domain mapping";
-        assert_eq!(
-            tokens(lex(src, test_file())),
-            vec![
-                Token::Evidence,
-                Token::Revelation,
-                Token::Synthesis,
-                Token::Analogy,
-                Token::Source,
-                Token::Text,
-                Token::Translator,
-                Token::Sources,
-                Token::Argument,
-                Token::Domain,
-                Token::Mapping,
-            ]
-        );
-    }
-
-    // Ensure longest keyword wins (sources vs source).
-    #[test]
-    fn longest_keyword_wins() {
-        let src = "sources source";
-        assert_eq!(
-            tokens(lex(src, test_file())),
-            vec![Token::Sources, Token::Source]
-        );
-    }
-
-    // -------------------------------------------------------------------------
     // String literals
     // -------------------------------------------------------------------------
     #[test]
@@ -826,27 +654,6 @@ mod tests {
     }
 
     // -------------------------------------------------------------------------
-    // Annotations
-    // -------------------------------------------------------------------------
-    #[test]
-    fn annotation_simple() {
-        let src = r#"@stable("v1.0")"#;
-        assert_eq!(
-            tokens(lex(src, test_file())),
-            vec![Token::Annotation("stable".into(), "v1.0".into())]
-        );
-    }
-
-    #[test]
-    fn annotation_with_escapes() {
-        let src = r#"@note("say \"hello\"")"#;
-        assert_eq!(
-            tokens(lex(src, test_file())),
-            vec![Token::Annotation("note".into(), "say \"hello\"".into())]
-        );
-    }
-
-    // -------------------------------------------------------------------------
     // Comments
     // -------------------------------------------------------------------------
     #[test]
@@ -854,7 +661,7 @@ mod tests {
         let src = "axiom // this is a comment\nframework";
         assert_eq!(
             tokens(lex(src, test_file())),
-            vec![Token::Axiom, Token::Framework]
+            vec![Token::Identifier("axiom".into()), Token::Identifier("framework".into())]
         );
     }
 
@@ -863,20 +670,20 @@ mod tests {
         let src = "axiom /* block\ncomment */ framework";
         assert_eq!(
             tokens(lex(src, test_file())),
-            vec![Token::Axiom, Token::Framework]
+            vec![Token::Identifier("axiom".into()), Token::Identifier("framework".into())]
         );
     }
 
     #[test]
     fn comment_at_end_of_file() {
         let src = "axiom // trailing comment";
-        assert_eq!(tokens(lex(src, test_file())), vec![Token::Axiom]);
+        assert_eq!(tokens(lex(src, test_file())), vec![Token::Identifier("axiom".into())]);
     }
 
     #[test]
     fn block_comment_at_end_of_file() {
         let src = "axiom /* trailing block */";
-        assert_eq!(tokens(lex(src, test_file())), vec![Token::Axiom]);
+        assert_eq!(tokens(lex(src, test_file())), vec![Token::Identifier("axiom".into())]);
     }
 
     // -------------------------------------------------------------------------
@@ -977,32 +784,6 @@ mod tests {
     // -------------------------------------------------------------------------
     // Full integration
     // -------------------------------------------------------------------------
-    #[test]
-    fn mixed_tokens() {
-        let src = r#"
-            axiom "My Axiom" {
-                version "1.0"
-                requires [ "Other" ]
-            }
-        "#;
-        let toks = tokens(lex(src, test_file()));
-        assert_eq!(
-            toks,
-            vec![
-                Token::Axiom,
-                Token::String("My Axiom".into()),
-                Token::LBrace,
-                Token::Version,
-                Token::String("1.0".into()),
-                Token::Requires,
-                Token::LBracket,
-                Token::String("Other".into()),
-                Token::RBracket,
-                Token::RBrace,
-            ]
-        );
-    }
-
     #[test]
     fn empty_source() {
         assert_eq!(tokens(lex("", test_file())), Vec::<Token>::new());

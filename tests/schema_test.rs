@@ -8,7 +8,6 @@ use std::path::{Path, PathBuf};
 use vdl::codegen::compose::compose;
 use vdl::error::VdlError;
 use vdl::model::SchemaDoc;
-use vdl::parser::Document;
 use vdl::validator::schema::collect_schema_errors;
 
 fn fixtures_dir() -> PathBuf {
@@ -25,10 +24,7 @@ fn read(name: &str) -> String {
 
 fn parse(src: &str, file: &Path) -> SchemaDoc {
     let tokens = vdl::lexer::lex(src, file).expect("lexing should succeed");
-    match vdl::parse_document(&tokens, src, file).expect("parsing should succeed") {
-        Document::Schema(doc) => doc,
-        Document::Legacy(_) => panic!("expected a schema document"),
-    }
+    vdl::parse_document(&tokens, src, file).expect("parsing should succeed")
 }
 
 fn load(name: &str) -> SchemaDoc {
@@ -118,7 +114,7 @@ fn body_fidelity_after_documented_transform() {
 
 #[test]
 fn crlf_source_renders_lf_body() {
-    let src = read("runbooks.vdl");
+    let src = read("runbooks.vdl").replace("\r\n", "\n");
     let crlf = src.replace('\n', "\r\n");
     let file = fixture("runbooks.vdl");
     let lf_doc = parse(&src, &file);
@@ -241,14 +237,18 @@ entity "Widget" "w1" {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn legacy_fixture_still_parses_as_legacy() {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/seven_laws.vdl");
-    let src = std::fs::read_to_string(&path).expect("legacy fixture readable");
-    let tokens = vdl::lexer::lex(&src, &path).expect("legacy fixture lexes");
-    match vdl::parse_document(&tokens, &src, &path).expect("legacy fixture parses") {
-        Document::Legacy(module) => assert!(!module.entities.is_empty()),
-        Document::Schema(_) => panic!("legacy fixture must not be parsed as a schema document"),
+fn legacy_words_are_available_as_schema_type_and_body_field() {
+    let src = r#"
+schema "test" { type "axiom" { field "evidence" body } }
+axiom "example" {
+    evidence {
+        Schema-authored content.
     }
+}
+"#;
+    let doc = parse(src, Path::new("evidence.vdl"));
+    assert!(diag(&doc).is_empty(), "{:?}", diag(&doc));
+    assert!(compose(&doc, "example").unwrap().contains("Schema-authored content."));
 }
 
 #[test]

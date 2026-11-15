@@ -9,9 +9,7 @@ use crate::error::{SourceLocation, VdlError, VdlResult};
 use crate::lexer;
 use crate::lexer::token::Token;
 use crate::model::{Instance, Schema, SchemaDoc};
-use crate::parser::schema::{
-    declares_schema, first_declaration, parse_schema_fragment, starts_schema_document,
-};
+use crate::parser::schema::{declares_schema, first_declaration, parse_schema_fragment};
 use crate::validator;
 use std::collections::HashSet;
 use std::fs;
@@ -78,22 +76,6 @@ fn collect_recursive(dir: &Path, files: &mut Vec<PathBuf>) -> std::io::Result<()
     Ok(())
 }
 
-/// Returns `true` when any `.vdl` file in `path` uses the schema document form.
-///
-/// This inspects the token stream without parsing it. `vdl compile` uses it to
-/// tell a schema project apart from a
-/// legacy directory when no manifest exists.
-pub fn contains_schema_documents(path: &Path) -> VdlResult<bool> {
-    for file in discover_vdl_files(path)? {
-        let source = read_source(&file)?;
-        let tokens = lexer::lex(&source, &file)?;
-        if starts_schema_document(&tokens) {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-
 /// Load and validate every source under `path` as one schema project.
 ///
 /// # Errors
@@ -153,7 +135,7 @@ pub fn load_schema_project(path: &Path) -> VdlResult<SchemaProject> {
                 let declared_shorthand = first_declaration(&tokens)
                     .and_then(Token::word)
                     .is_some_and(|name| declared_types.contains(name));
-                if !declared_shorthand && !starts_schema_document(&tokens) {
+                if !declared_shorthand && crate::parser::is_legacy_document(&tokens) {
                     legacy_files.push(file.clone());
                     continue;
                 }
@@ -188,41 +170,23 @@ pub fn load_schema_project(path: &Path) -> VdlResult<SchemaProject> {
         });
     }
 
-    let Some(schema) = schema else {
-        let legacy = if legacy_files.is_empty() {
-            String::new()
-        } else {
-            format!(
-                "\nLegacy document(s) found instead:\n{}",
-                legacy_files
-                    .iter()
-                    .map(|file| format!("  {}", file.display()))
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            )
-        };
-        return Err(VdlError::Other {
-            message: format!(
-                "no schema block found in project '{}'; a schema document must declare exactly one `schema \"...\"` block.{}",
-                root.display(),
-                legacy
-            ),
-        });
-    };
-
     if !legacy_files.is_empty() {
         return Err(VdlError::Other {
             message: format!(
-                "project '{}' mixes schema documents with the legacy entity form; convert or remove:\n{}",
-                root.display(),
-                legacy_files
-                    .iter()
-                    .map(|file| format!("  {}", file.display()))
-                    .collect::<Vec<_>>()
-                    .join("\n")
+                "legacy form is no longer supported; migrate these documents to schema form:\n{}",
+                legacy_files.iter().map(|file| format!("  {}", file.display())).collect::<Vec<_>>().join("\n")
             ),
         });
     }
+
+    let Some(schema) = schema else {
+        return Err(VdlError::Other {
+            message: format!(
+                "no schema block found in project '{}'; a schema document must declare exactly one `schema \"...\"` block.",
+                root.display()
+            ),
+        });
+    };
 
     let mut doc = SchemaDoc { schema, entities, imports };
     resolve_import_references(&mut doc)?;

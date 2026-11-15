@@ -48,8 +48,7 @@ Diagnostics across the project:
 
 - exactly one schema block in the whole project; zero or several report every
   location involved;
-- a project that mixes schema documents with legacy entity documents is
-  rejected, naming the legacy files;
+- legacy fixed-type documents are rejected and must be migrated to schema form;
 - missing and wrong-type references point at the instance that uses them, in
   whichever file or folder it lives;
 - duplicate entity IDs name both the duplicate and the first declaration.

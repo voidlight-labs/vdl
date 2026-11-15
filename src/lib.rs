@@ -1,34 +1,35 @@
 //! Voidlight Definition Language (VDL) Compiler
 //!
-//! A standalone Rust compiler that transforms declarative knowledge definitions
-//! into multiple output formats including JSON Graph, Markdown, Search Index,
-//! and Graphviz DOT.
+//! A standalone Rust compiler for schema-authored VDL documents: each document
+//! declares its own model in a `schema` block, instances are validated against
+//! it, and projects compose into Markdown.
 //!
 //! # Architecture
 //!
-//! The compiler follows a 5-stage pipeline:
-//!
 //! 1. **Lexer** — Tokenizes VDL source into semantic tokens
-//! 2. **Parser** — Builds an Abstract Syntax Tree (AST)
-//! 3. **Validator** — Checks type constraints, reference integrity, evidence rules
-//! 4. **Graph Builder** — Constructs a directed acyclic knowledge graph
-//! 5. **Code Generator** — Produces JSON, Markdown, Search Index, and DOT output
+//! 2. **Parser** — Parses schema documents into a [`model::SchemaDoc`]
+//! 3. **Validator** — Checks the schema and every instance against it
+//! 4. **Composer** — Renders a root entity and its composed collections to
+//!    Markdown (`codegen::compose`), guarded by the project build
+//!    (`project::build_project`) for `vdl.toml` targets.
 //!
 //! # Usage
 //!
 //! ```no_run
 //! use std::path::Path;
+//! use vdl::{lexer, parser, validator::schema::validate_schema};
 //!
-//! // Validate a VDL file
-//! // vdl::validate(Path::new("input.vdl"));
-//!
-//! // Compile to all targets
-//! // vdl::compile(Path::new("input.vdl"), Path::new("output/"));
+//! let source = r#"schema "example" { type "Page" { field "name" text } }
+//! Page "intro" { name "Introduction" }"#;
+//! let path = Path::new("input.vdl");
+//! let tokens = lexer::lex(source, path)?;
+//! let doc = parser::parse_document(&tokens, source, path)?;
+//! validate_schema(&doc)?;
+//! # Ok::<(), vdl::VdlError>(())
 //! ```
 
 pub mod codegen;
 pub mod error;
-pub mod graph;
 pub mod lexer;
 pub mod model;
 pub mod parser;
@@ -40,15 +41,9 @@ mod fsutil;
 // CLI is primarily for the binary, but exposed for library consumers who want it.
 pub mod cli;
 
-#[cfg(test)]
-pub mod test_helpers;
-
 pub use error::{SourceLocation, VdlError, VdlResult};
 pub use model::{
-    FieldDecl, FieldKind, FieldValue, Instance, Schema, SchemaDoc, TypeDecl, Value,
+    FieldDecl, FieldKind, FieldValue, ImportDecl, InlineItem, Instance, Schema, SchemaDoc, TypeDecl,
+    Value,
 };
-pub use parser::{parse_document, Document};
-pub use parser::ast::{
-    Annotation, Analogy, Entity, EntityType, EvidenceBlock, Module, Relationship, RelationshipType,
-    Revelation, Synthesis,
-};
+pub use parser::parse_document;

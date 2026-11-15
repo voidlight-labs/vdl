@@ -3,8 +3,7 @@ use std::path::PathBuf;
 
 /// Voidlight Definition Language compiler.
 ///
-/// Transforms declarative knowledge definitions into JSON Graph, Markdown,
-/// Search Index, and Graphviz DOT output.
+/// Validates schema documents and composes schema projects into Markdown.
 #[derive(Parser)]
 #[command(name = "vdl")]
 #[command(about = "Voidlight Definition Language compiler")]
@@ -18,52 +17,21 @@ pub struct Cli {
 pub enum Commands {
     /// Validate VDL files and report errors with precise locations.
     ///
-    /// A directory that contains schema documents is validated as one project:
-    /// every `.vdl` file is merged, exactly one schema block is required, and
-    /// IDs resolve across folders without a build manifest.
+    /// A file or directory is loaded as a schema project: every `.vdl` file is
+    /// merged, exactly one schema block is required, and IDs resolve across
+    /// folders without a build manifest. Documents in the removed legacy
+    /// (v0.1 fixed-type) form are rejected with a migration hint.
     Validate {
         /// Path to a .vdl file or directory containing .vdl files.
         path: String,
     },
 
-    /// Compile VDL files through the full pipeline.
+    /// Compile a schema project through its `vdl.toml` manifest.
     ///
-    /// A directory with `vdl.toml` is a schema project: every registered
-    /// Markdown target is rendered, validated, and only then written. A
-    /// directory without a manifest keeps the legacy graph pipeline.
+    /// Every registered Markdown target is rendered, validated, and only then
+    /// written. A directory without a `vdl.toml` is an error, not a fallback.
     Compile {
-        /// Path to a .vdl file, or a project directory containing vdl.toml.
-        path: String,
-    },
-
-    /// Export a subgraph centered on an entity to DOT format.
-    Graph {
-        /// Entity ID to center the subgraph on.
-        entity_id: String,
-        /// Path to a .vdl file or directory containing .vdl files.
-        #[arg(default_value = ".")]
-        path: String,
-    },
-
-    /// Compare two versions of the same entity.
-    Diff {
-        /// Entity ID.
-        id: String,
-        /// First version to compare.
-        v1: String,
-        /// Second version to compare.
-        v2: String,
-        /// Path to a .vdl file or directory containing .vdl files.
-        #[arg(default_value = ".")]
-        path: String,
-    },
-
-    /// Search entity IDs and titles using a regex pattern.
-    Search {
-        /// Search query (regex).
-        query: String,
-        /// Path to a .vdl file or directory containing .vdl files.
-        #[arg(default_value = ".")]
+        /// Project directory containing vdl.toml.
         path: String,
     },
 

@@ -6,14 +6,13 @@
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
-  <img src="https://img.shields.io/badge/tests-203%20passed-brightgreen.svg" alt="Tests: 203 passed">
+  <img src="https://img.shields.io/badge/tests-128%20passed-brightgreen.svg" alt="Tests: 128 passed">
   <img src="https://img.shields.io/badge/validation%20rules-V1%E2%80%93V16-orange.svg" alt="Validation rules V1-V16">
   <img src="https://img.shields.io/badge/rust-edition%202021-dea584.svg" alt="Rust edition 2021">
 </p>
 
 > **Voidlight Definition Language** — a standalone Rust compiler that turns
-> declarative knowledge definitions into composed Markdown, JSON Graph,
-> Search Index, and Graphviz DOT output.
+> schema-authored knowledge definitions into composed Markdown.
 
 VDL is a domain-specific language for describing, structuring, and
 interconnecting knowledge systems. Its core idea: **the source defines its
@@ -29,12 +28,11 @@ git clone https://github.com/voidlight-labs/vdl
 cd vdl
 cargo install --path .
 
-# 2. Validate a VDL file
-vdl validate tests/fixtures/seven_laws.vdl
+# 2. Validate a self-contained schema document
+vdl validate tests/fixtures/schema/runbooks.vdl
 
-# 3. Compile a legacy document to all output formats
-vdl compile tests/fixtures/seven_laws.vdl
-# Output appears in ./output/
+# 3. Compose one root to Markdown
+vdl compose tests/fixtures/schema/runbooks.vdl --root core-guide
 
 # 4. Build a schema project using vdl.toml
 vdl compile tests/fixtures/project
@@ -80,7 +78,8 @@ vdl compose . --root core-guide
 
 | Capability | Status |
 |------------|--------|
-| Lexer / parser / validator / graph / codegen | ✅ shipped |
+| Schema lexer / parser / validator / Markdown composition | ✅ shipped |
+| Legacy fixed-type pipeline, graph / search / diff | 🗑 removed (2026-11-16) — see [roadmap](docs/ROADMAP.md) |
 | Schema documents (author-defined model, single file + project) | ✅ shipped |
 | Multi-file projects with `vdl.toml` manifests + build safety | ✅ shipped |
 | Composition: `compose`, `include`, `inline`, heading numbering | ✅ shipped |
@@ -89,20 +88,19 @@ vdl compose . --root core-guide
 | Co-occurrence validation (require-if-verified guards for dalil files) | ⏳ postponed (alternative: lint script) |
 | Multi-domain handoff (music) | 📋 proposed |
 
-`cargo test --lib` currently reports **203 passed** (2 ignored). Known
-environment quirk: 3 `project_test` integration tests fail on some Windows
-setups due to `miette` stderr line-wrapping — not a regression.
+`cargo test --lib` currently reports **128 passed**, with no ignored tests.
 
 ## Documentation
 
 | Document | Contents |
 |----------|----------|
-| [docs/grammar.md](docs/grammar.md) | Grammar reference: schema form (primary) + legacy form appendix |
+| [docs/grammar.md](docs/grammar.md) | Grammar reference: schema form |
 | [docs/schema-projects.md](docs/schema-projects.md) | Multi-file projects, `vdl.toml` manifests, project diagnostics |
 | [docs/composition.md](docs/composition.md) | Compose output, labels, heading numbering, cite rendering, build safety |
-| [docs/validation.md](docs/validation.md) | Validation rules V1–V16, legacy checks, project diagnostics |
+| [docs/validation.md](docs/validation.md) | Validation rules V1–V16 and project diagnostics |
 | [docs/cli.md](docs/cli.md) | Every command and its flags |
 | [docs/architecture.md](docs/architecture.md) | Compiler stages, project layout, dependencies |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | Planned, postponed, and completed work |
 
 ## Installation
 
@@ -138,7 +136,7 @@ vdl --help
 ```bash
 cargo test              # all tests including snapshot tests
 cargo test --lib        # unit tests only
-cargo insta review      # update snapshots (if output format changes)
+cargo test --test snapshot_test # schema Markdown output contract
 ```
 
 ## Zed syntax highlighting

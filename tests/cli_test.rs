@@ -22,85 +22,53 @@ where
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_validate_seven_laws_success() {
-    let output = run_vdl(["validate", "tests/fixtures/seven_laws.vdl"]);
-    let stdout = String::from_utf8_lossy(&output.stdout);
+fn validate_rejects_removed_legacy_form() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("legacy.vdl");
+    fs::write(&path, "axiom \"old\" { version \"1.0\" }").unwrap();
+    let output = run_vdl(["validate", path.to_str().unwrap()]);
     let stderr = String::from_utf8_lossy(&output.stderr);
-
-    assert!(
-        output.status.success(),
-        "Expected `vdl validate` to succeed for seven_laws.vdl.\nstdout: {}\nstderr: {}",
-        stdout,
-        stderr
-    );
-    assert!(
-        stdout.contains("Validated"),
-        "Expected 'Validated' in output. stdout: {}",
-        stdout
-    );
-    assert!(
-        stdout.contains("No errors"),
-        "Expected 'No errors' in output. stdout: {}",
-        stdout
-    );
+    assert!(!output.status.success());
+    assert!(stderr.contains("legacy form is no longer supported"), "{stderr}");
 }
 
 #[test]
-fn test_validate_invalid_cycle_failure() {
-    let output = run_vdl(["validate", "tests/fixtures/invalid_cycle.vdl"]);
+fn validate_rejects_legacy_annotations() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("legacy.vdl");
+    fs::write(&path, "@author(\"person\")
+axiom \"old\" {}").unwrap();
+    let output = run_vdl(["validate", path.to_str().unwrap()]);
     let stderr = String::from_utf8_lossy(&output.stderr);
-
-    assert!(
-        !output.status.success(),
-        "Expected `vdl validate` to fail for invalid_cycle.vdl (circular dependency)."
-    );
-    let stderr_lower = stderr.to_lowercase();
-    assert!(
-        stderr_lower.contains("error") || stderr_lower.contains("cycle"),
-        "Expected error message about cycle. stderr: {}",
-        stderr
-    );
+    assert!(!output.status.success());
+    assert!(stderr.contains("legacy form is no longer supported"), "{stderr}");
 }
 
-// ---------------------------------------------------------------------------
-// compile
-// ---------------------------------------------------------------------------
+#[test]
+fn removed_commands_are_rejected() {
+    for command in ["graph", "diff", "search"] {
+        let output = run_vdl([command]);
+        assert!(!output.status.success(), "{command} must not be available");
+        assert!(String::from_utf8_lossy(&output.stderr).contains("unrecognized subcommand"));
+    }
+}
 
 #[test]
-fn test_compile_produces_expected_outputs() {
-    // Clean up any pre-existing output directory so we get a fresh run.
-    let _ = fs::remove_dir_all("output");
-
-    let output = run_vdl(["compile", "tests/fixtures/seven_laws.vdl"]);
-    let stdout = String::from_utf8_lossy(&output.stdout);
+fn compile_empty_directory_requires_manifest() {
+    let dir = tempfile::tempdir().unwrap();
+    let output = run_vdl(["compile", dir.path().to_str().unwrap()]);
     let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success());
+    assert!(stderr.contains("vdl.toml"), "{stderr}");
+    assert!(stderr.contains("no build manifest"), "{stderr}");
+}
 
-    assert!(
-        output.status.success(),
-        "Expected `vdl compile` to succeed.\nstdout: {}\nstderr: {}",
-        stdout,
-        stderr
-    );
-
-    assert!(
-        Path::new("output/graph.json").exists(),
-        "Expected output/graph.json to be created."
-    );
-    assert!(
-        Path::new("output/soul").exists(),
-        "Expected output/soul/ directory to be created."
-    );
-    assert!(
-        Path::new("output/search.json").exists(),
-        "Expected output/search.json to be created."
-    );
-    assert!(
-        Path::new("output/graph.dot").exists(),
-        "Expected output/graph.dot to be created."
-    );
-
-    // Optional tidy-up so the workspace stays clean.
-    let _ = fs::remove_dir_all("output");
+#[test]
+fn compose_reports_schema_composition_cycle() {
+    let output = run_vdl(["compose", "tests/fixtures/invalid_cycle.vdl", "--root", "a"]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success());
+    assert!(stderr.contains("composition cycle: a -> b -> a"), "{stderr}");
 }
 
 // ---------------------------------------------------------------------------
@@ -183,24 +151,6 @@ fn test_compose_unknown_root_fails() {
 
     assert!(!output.status.success());
     assert!(stderr.contains("nope"), "stderr: {}", stderr);
-}
-
-#[test]
-fn test_compose_rejects_legacy_document() {
-    let output = run_vdl([
-        "compose",
-        "tests/fixtures/seven_laws.vdl",
-        "--root",
-        "anything",
-    ]);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-
-    assert!(!output.status.success());
-    assert!(
-        stderr.contains("schema document"),
-        "expected a message about schema documents, got: {}",
-        stderr
-    );
 }
 
 // ---------------------------------------------------------------------------

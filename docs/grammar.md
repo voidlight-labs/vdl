@@ -1,12 +1,8 @@
 # Grammar Reference
 
-VDL has two document forms. The **schema form** is the primary, current form:
-a document (or project) declares its own model and the compiler learns every
-type, field, and composition decision from it. The **legacy form** (v0.1) is
-the fixed-type form that predates schemas; it is still parsed and compiled.
-
-- New projects: use the schema form.
-- Legacy sources: still supported, see the appendix at the bottom.
+VDL uses schema form: each document or project declares its own model.
+The legacy v0.1 fixed-type form was removed on 2026-11-16; old documents
+must be migrated to schema form.
 
 ---
 
@@ -65,10 +61,8 @@ same model. Bare names are case-sensitive and match
 spaces, or for type names that conflict with the `schema`, `entity`, and
 `package` declarations.
 
-In a project, a bare type name declared in the schema selects the schema
-grammar even if it also starts a legacy declaration, such as `framework` or
-`artifact`. Standalone schema documents start with their schema block or a
-package header. Existing legacy sources remain supported.
+In a project, bare type names are resolved against the declared schema,
+including names such as `framework` or `artifact`.
 
 **Versions are author-defined.** The schema form has no built-in version
 field and no compiler-enforced version format. If your model needs versions,
@@ -77,8 +71,8 @@ compiler treats it like any other text field.
 
 ### Packages and entity names
 
-Declare a package at the start of a schema source file, after any leading
-annotations and before any schema or instance declarations.
+Declare a package at the start of a schema source file, before any schema
+or instance declarations.
 
 ```vdl
 package soul.alignment
@@ -185,9 +179,8 @@ artifact "soul.alignment.sleep-and-death" {
 }
 ```
 
-Braced bodies work for schema-defined body fields. Use the explicit
-`field "evidence" {` spelling for a schema field named `evidence`, since bare
-`evidence {` opens a legacy evidence block. Triple-quoted bodies still work.
+Braced bodies work for schema-defined body fields, including bare `evidence`
+when declared in the schema. Triple-quoted bodies also work.
 
 Bodies are literal, with exactly five permitted transformations. Fidelity
 means byte-identical after these:
@@ -202,79 +195,3 @@ means byte-identical after these:
 
 Blank lines and relative indentation are preserved exactly. Non-ASCII text
 is decoded as UTF-8 and survives byte-identical.
-
----
-
-## Appendix: legacy form (v0.1)
-
-The legacy form is fixed-type: a closed set of entity types with mandatory
-relationships and evidence blocks. It is still parsed and compiled.
-
-### Entity declaration
-
-```vdl
-<type> "<identifier>" {
-    version "<major.minor>"
-    title "<human-readable name>"
-    description "<brief summary>"
-
-    // Relationships (optional, type-dependent)
-    requires [ "<id.a>", "<id.b>" ]
-    enables [ "<id.c>" ]
-    references [ "<id.d>" ]
-    based_on [ "<id.e>" ]
-    derives_from [ "<id.f>" ]
-    implements [ "<id.g>" ]
-    inspired_by [ "<id.h>" ]
-    evolved_from [ "<id.i>" ]
-    contradicts [ "<id.j>" ]
-
-    // Evidence block (mandatory for non-artifact)
-    evidence {
-        revelation {
-            source "<Quran X:Y or Hadith reference>"
-            text "<exact quotation>"
-            translator "<optional>"
-        }
-        synthesis {
-            sources [ "<Source A>", "<Source B>" ]
-            argument "<scholarly reasoning>"
-        }
-        analogy {
-            domain "<source domain>"
-            mapping "<cross-domain explanation>"
-        }
-    }
-}
-```
-
-### Entity types
-
-| Type | Constraint |
-|------|-----------|
-| `axiom` | `requires` must be empty |
-| `framework` | Must have `based_on` |
-| `law` | Must have `derives_from` |
-| `principle` | Must have `derives_from` |
-| `concept` | No mandatory relationships |
-| `artifact` | Must reference at least one `law` or `principle` |
-| `pillar`, `document`, `project`, `release`, `persona`, `collection` | Parseable; basic rules only in v0.1 |
-
-### Annotations
-
-```vdl
-@author("Name")
-@created("YYYY-MM-DD")
-@reviewed("YYYY-MM-DD")
-@status("canonical" | "draft" | "deprecated")
-@pillar("soul" | "vision" | "labs" | "music")
-```
-
-### Version format (legacy only)
-
-`major.minor` — e.g., `"5.0"`, `"1.10"`. Must match `^\d+\.\d+$`. This rule
-applies only to legacy entity documents; schema documents have no built-in
-version concept.
-
-A project that mixes schema documents with legacy entity documents is
-rejected, naming the legacy files.

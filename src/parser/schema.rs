@@ -3,7 +3,7 @@
 //! Grammar (informal):
 //!
 //! ```text
-//! document  := annotation* package? schema? instance*
+//! document  := package? schema? instance*
 //! package   := "package" QUALIFIED_NAME
 //! schema    := "schema" STRING "{" type* "}"
 //! type      := "type" STRING ("label" STRING)? "{" field_decl* "}"
@@ -131,16 +131,7 @@ fn schema_block_spans(tokens: &[(Token, Span)]) -> impl Iterator<Item = &Span> {
     })
 }
 
-fn skip_annotations(tokens: &[(Token, Span)]) -> &[(Token, Span)] {
-    let first = tokens
-        .iter()
-        .position(|(token, _)| !matches!(token, Token::Annotation(..)))
-        .unwrap_or(tokens.len());
-    &tokens[first..]
-}
-
 pub(crate) fn first_declaration(tokens: &[(Token, Span)]) -> Option<&Token> {
-    let tokens = skip_annotations(tokens);
     let mut i = if matches!(tokens.first().map(|(t, _)| t), Some(Token::Package)) { 2 } else { 0 };
     while matches!(tokens.get(i).map(|(t, _)| t), Some(Token::Import)) {
         i += 2;
@@ -170,7 +161,6 @@ fn split_package<'a>(
     tokens: &'a [(Token, Span)],
     file: &Path,
 ) -> VdlResult<(Option<&'a str>, &'a [(Token, Span)])> {
-    let tokens = skip_annotations(tokens);
     let [(Token::Package, keyword), rest @ ..] = tokens else {
         return Ok((None, tokens));
     };
@@ -212,18 +202,6 @@ fn split_imports<'a>(tokens: &'a [(Token, Span)], file: &Path) -> VdlResult<(Vec
     Ok((imports, &tokens[offset..]))
 }
 
-/// Identifies schema syntax without a project schema. A bare type that also
-/// starts a legacy declaration is resolved by the project loader.
-pub(crate) fn starts_schema_document(tokens: &[(Token, Span)]) -> bool {
-    first_declaration(tokens).is_some_and(|token| {
-        token.word().is_some()
-            && (super::legacy_entity_type(token).is_none()
-                || tokens.iter().any(|(token, _)| {
-                    matches!(token, Token::Identifier(_) | Token::RawString(_) | Token::Field)
-                }))
-    })
-}
-
 /// Parse a schema document from a token stream.
 ///
 /// # Errors
@@ -248,7 +226,7 @@ pub fn parse_schema_document(
             .or_else(|| {
                 tokens
                     .iter()
-                    .find(|(token, _)| !matches!(token, Token::Annotation(..)))
+                    .next()
                     .map(|(_, span)| span.to_location(&file))
             })
             .unwrap_or_else(|| SourceLocation::new(file.clone(), 1, 1));

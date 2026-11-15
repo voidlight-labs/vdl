@@ -480,11 +480,9 @@ fn wrong_cross_file_reference_type_points_at_the_usage() {
     let err = stderr(&output);
     assert!(!output.status.success(), "expected failure");
     assert!(err.contains("run.vdl"), "expected usage file in: {}", err);
-    assert!(
-        err.contains("expects type 'Section' but 'other' is of type 'Runbook'"),
-        "{}",
-        err
-    );
+    // miette may wrap between words depending on terminal width and path length.
+    let normalized = err.lines().map(|line| line.trim().trim_start_matches('│').trim()).collect::<Vec<_>>().join(" ");
+    assert!(normalized.contains("expects type 'Section' but 'other' is of type 'Runbook'"), "{}", err);
 }
 
 #[test]
@@ -581,8 +579,7 @@ fn two_schema_blocks_across_files_report_both_locations() {
 fn mixing_schema_sources_with_legacy_documents_is_rejected() {
     let temp = tempfile::tempdir().expect("tempdir");
     let root = temp.path();
-    let legacy = fs::read_to_string(manifest_dir().join("tests/fixtures/seven_laws.vdl"))
-        .expect("legacy fixture readable");
+    let legacy = r#"axiom "old" { version "1.0" }"#;
     write_files(
         &root,
         &[
@@ -595,7 +592,7 @@ fn mixing_schema_sources_with_legacy_documents_is_rejected() {
 }
 "#,
             ),
-            ("legacy.vdl", &legacy),
+            ("legacy.vdl", legacy),
         ],
     );
 
