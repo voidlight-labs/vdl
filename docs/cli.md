@@ -20,9 +20,13 @@ See [validation.md](validation.md) for the rules.
 
 ## `vdl compile <project_dir>`
 
-A project directory **must** contain `vdl.toml`. Every registered Markdown
-target is validated and rendered before the first output is written. A missing
-manifest is an error; there is no fallback pipeline.
+A project directory **must** contain `vdl.toml`. Every registered target is
+validated and rendered before the first output is written: `[[build.markdown]]`
+targets compose one Markdown document per entity root, and optional
+`[[build.graph]]` targets write `json`, `dot`, or `index` artifacts for the
+whole project (identical bytes to `vdl graph --format`). A missing manifest is
+an error; there is no fallback pipeline. See [schema-projects.md](schema-projects.md)
+for the manifest shape.
 
 ```bash
 vdl compile tests/fixtures/project

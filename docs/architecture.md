@@ -34,8 +34,9 @@ requirements, and modifier placement. See [validation.md](validation.md).
 
 The composer renders one schema entity and its composed references as
 Markdown, with citation and heading-numbering options. Project builds read a
-`vdl.toml` manifest, validate output destinations, render all targets, and only
-then write outputs. Cycles encountered during composition are errors.
+`vdl.toml` manifest, validate output destinations, render all targets
+(Markdown per root plus any `[[build.graph]]` artifacts from `src/graph/`),
+and only then write outputs. Cycles encountered during composition are errors.
 
 ## Stage 5: Graph and search (`src/graph/`)
 

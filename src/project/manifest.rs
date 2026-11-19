@@ -8,6 +8,10 @@
 //! root = "deploy"
 //! output = "runbooks/deploy.md"
 //! cites = "short"
+//!
+//! [[build.graph]]
+//! format = "json"
+//! output = "graph.json"
 //! ```
 //!
 //! `root` is an entity ID; `output` is relative to `out_dir`, and `out_dir` is
@@ -16,9 +20,13 @@
 //! The optional per-target `cites` key (`none`, `link`, `short`; default
 //! `none`) chooses how `cite`-flagged reference fields render at their cite
 //! points; `short` renders each target's heading-field text, `link` its ID.
+//! `[[build.graph]]` entries are optional graph artifacts (`format` is
+//! `json`, `dot`, or `index`) rendered from the whole project; at least one
+//! `[[build.markdown]]` target is always required.
 
 use crate::codegen::compose::CiteMode;
 use crate::error::{VdlError, VdlResult};
+use crate::graph::GraphFormat;
 use serde::Deserialize;
 use std::fmt::Display;
 use std::fs;
@@ -36,6 +44,10 @@ output = "runbooks/deploy.md"
 [[build.markdown]]
 root = "recovery"
 output = "runbooks/recovery.md"
+
+[[build.graph]]
+format = "json"
+output = "graph.json"
 "#;
 
 /// A parsed and path-checked build manifest.
@@ -44,6 +56,8 @@ pub struct Manifest {
     /// Relative to the project root. May be empty, meaning the root itself.
     pub out_dir: PathBuf,
     pub markdown: Vec<MarkdownTarget>,
+    /// Optional graph artifacts, rendered after the Markdown targets.
+    pub graph: Vec<GraphTarget>,
 }
 
 /// One `[[build.markdown]]` entry.
@@ -58,6 +72,15 @@ pub struct MarkdownTarget {
     pub cites: CiteMode,
 }
 
+/// One `[[build.graph]]` entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GraphTarget {
+    /// Which serialization the artifact holds.
+    pub format: GraphFormat,
+    /// Relative to [`Manifest::out_dir`], normalized.
+    pub output: PathBuf,
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawManifest {
@@ -69,6 +92,7 @@ struct RawManifest {
 struct RawBuild {
     out_dir: Option<String>,
     markdown: Option<Vec<RawTarget>>,
+    graph: Option<Vec<RawGraphTarget>>,
 }
 
 #[derive(Deserialize)]
@@ -80,6 +104,13 @@ struct RawTarget {
     number_headings: bool,
     #[serde(default)]
     cites: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawGraphTarget {
+    format: Option<String>,
+    output: Option<String>,
 }
 
 /// Map the manifest's `cites` key onto [`CiteMode`], rejecting unknown values
@@ -199,7 +230,47 @@ pub fn load_manifest(root: &Path) -> VdlResult<Option<Manifest>> {
         });
     }
 
-    Ok(Some(Manifest { out_dir, markdown }))
+    let mut graph = Vec::with_capacity(build.graph.as_ref().map_or(0, Vec::len));
+    for (index, target) in build.graph.unwrap_or_default().into_iter().enumerate() {
+        let label = format!("build.graph[{}]", index + 1);
+
+        let format = match target.format {
+            Some(raw) if !raw.trim().is_empty() => GraphFormat::parse(&raw).ok_or_else(|| {
+                invalid(
+                    &path,
+                    format!(
+                        "{} format must be one of \"json\", \"dot\", \"index\"; found \"{}\"",
+                        label,
+                        raw.trim()
+                    ),
+                )
+            })?,
+            Some(_) => {
+                return Err(invalid(&path, format!("{} format must not be empty", label)));
+            }
+            None => {
+                return Err(invalid(&path, format!("{} is missing format", label)));
+            }
+        };
+
+        let raw_output = match target.output {
+            Some(output) if !output.trim().is_empty() => output,
+            Some(_) => {
+                return Err(invalid(
+                    &path,
+                    format!("{} output must not be empty", label),
+                ));
+            }
+            None => {
+                return Err(invalid(&path, format!("{} is missing output", label)));
+            }
+        };
+        let output = relative_path(&raw_output, &format!("{} output", label), &path, false)?;
+
+        graph.push(GraphTarget { format, output });
+    }
+
+    Ok(Some(Manifest { out_dir, markdown, graph }))
 }
 
 /// Normalize a manifest path and reject anything that leaves the project.
@@ -375,6 +446,144 @@ output = "deploy.md"
     #[test]
     fn unknown_keys_are_rejected() {
         let (_temp, root) = write_manifest("[build]\nout_dir = \"dist\"\nextra = true\n");
+        let err = load_manifest(&root).unwrap_err().to_string();
+        assert!(err.contains("invalid build manifest"), "{}", err);
+    }
+
+    const VALID_GRAPH: &str = r#"[build]
+out_dir = "dist"
+
+[[build.markdown]]
+root = "deploy"
+output = "runbooks/deploy.md"
+
+[[build.graph]]
+format = "json"
+output = "graph.json"
+
+[[build.graph]]
+format = "dot"
+output = "./nested/graph.dot"
+"#;
+
+    #[test]
+    fn graph_targets_are_parsed_and_normalized() {
+        let (_temp, root) = write_manifest(VALID_GRAPH);
+        let manifest = load_manifest(&root).unwrap().expect("manifest present");
+        assert_eq!(manifest.graph.len(), 2);
+        assert_eq!(manifest.graph[0].format, GraphFormat::Json);
+        assert_eq!(manifest.graph[0].output, PathBuf::from("graph.json"));
+        assert_eq!(manifest.graph[1].format, GraphFormat::Dot);
+        assert_eq!(manifest.graph[1].output, PathBuf::from("nested/graph.dot"));
+    }
+
+    #[test]
+    fn empty_graph_list_is_allowed() {
+        let (_temp, root) = write_manifest(
+            r#"[build]
+out_dir = "dist"
+graph = []
+
+[[build.markdown]]
+root = "deploy"
+output = "deploy.md"
+"#,
+        );
+        let manifest = load_manifest(&root).unwrap().expect("manifest present");
+        assert!(manifest.graph.is_empty());
+    }
+
+    #[test]
+    fn missing_graph_format_is_rejected() {
+        let (_temp, root) = write_manifest(
+            r#"[build]
+out_dir = "dist"
+
+[[build.markdown]]
+root = "deploy"
+output = "deploy.md"
+
+[[build.graph]]
+output = "graph.json"
+"#,
+        );
+        let err = load_manifest(&root).unwrap_err().to_string();
+        assert!(err.contains("build.graph[1] is missing format"), "{}", err);
+    }
+
+    #[test]
+    fn unknown_graph_format_is_rejected() {
+        let (_temp, root) = write_manifest(
+            r#"[build]
+out_dir = "dist"
+
+[[build.markdown]]
+root = "deploy"
+output = "deploy.md"
+
+[[build.graph]]
+format = "svg"
+output = "graph.svg"
+"#,
+        );
+        let err = load_manifest(&root).unwrap_err().to_string();
+        assert!(
+            err.contains("build.graph[1] format must be one of \"json\", \"dot\", \"index\""),
+            "{}",
+            err
+        );
+        assert!(err.contains("\"svg\""), "{}", err);
+    }
+
+    #[test]
+    fn missing_graph_output_is_rejected() {
+        let (_temp, root) = write_manifest(
+            r#"[build]
+out_dir = "dist"
+
+[[build.markdown]]
+root = "deploy"
+output = "deploy.md"
+
+[[build.graph]]
+format = "json"
+"#,
+        );
+        let err = load_manifest(&root).unwrap_err().to_string();
+        assert!(err.contains("build.graph[1] is missing output"), "{}", err);
+    }
+
+    #[test]
+    fn graph_targets_do_not_satisfy_the_markdown_requirement() {
+        let (_temp, root) = write_manifest(
+            r#"[build]
+out_dir = "dist"
+
+[[build.graph]]
+format = "json"
+output = "graph.json"
+"#,
+        );
+        let err = load_manifest(&root).unwrap_err().to_string();
+        assert!(err.contains("no Markdown targets"), "{}", err);
+    }
+
+    #[test]
+    fn graph_unknown_keys_are_rejected() {
+        let (_temp, root) = write_manifest(
+            r#"[build]
+out_dir = "dist"
+
+[[build.markdown]]
+root = "deploy"
+output = "deploy.md"
+
+[[build.graph]]
+format = "json"
+output = "graph.json"
+root = "deploy"
+"#,
+        );
         let err = load_manifest(&root).unwrap_err().to_string();
         assert!(err.contains("invalid build manifest"), "{}", err);
     }

@@ -16,6 +16,18 @@ script.
 
 ## Done
 
+### Graph build targets in the manifest
+
+**Status:** done
+**Recorded:** 2026-11-20
+**Date:** 2026-11-20
+
+`vdl.toml` accepts optional `[[build.graph]]` targets (`format = "json" |
+"dot" | "index"` plus an `output` path inside `out_dir`), so `vdl compile`
+produces graph artifacts alongside Markdown. All destinations share the
+Markdown targets' guards; graph artifacts are byte-identical to `vdl graph`
+output. At least one Markdown target remains required.
+
 ### Schema-form graph & search outputs
 
 **Status:** done

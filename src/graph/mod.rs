@@ -15,6 +15,31 @@ use crate::error::{VdlError, VdlResult};
 use crate::model::{SchemaDoc, Value};
 use std::collections::HashSet;
 
+/// Output format for serialized graph artifacts, shared by the CLI and the
+/// build manifest.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]
+pub enum GraphFormat {
+    /// JSON node and edge list.
+    #[default]
+    Json,
+    /// Graphviz DOT digraph.
+    Dot,
+    /// JSON search index over entity content.
+    Index,
+}
+
+impl GraphFormat {
+    /// Parse a format name as written on the CLI or in `vdl.toml`.
+    pub fn parse(raw: &str) -> Option<GraphFormat> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "json" => Some(GraphFormat::Json),
+            "dot" => Some(GraphFormat::Dot),
+            "index" => Some(GraphFormat::Index),
+            _ => None,
+        }
+    }
+}
+
 /// One entity in the graph.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Node {

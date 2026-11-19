@@ -1532,3 +1532,168 @@ output = "alias.md"
         .is_symlink());
     assert!(output_dir.join("existing/actual.md").is_file());
 }
+
+// ---------------------------------------------------------------------------
+// Graph build targets ([[build.graph]])
+// ---------------------------------------------------------------------------
+
+const GRAPH_PROJECT_FILES: &[(&str, &str)] = &[
+    ("model.vdl", SCHEMA),
+    (
+        "runbooks.vdl",
+        r#"
+entity "Section" "intro" {
+    field "label" "Intro"
+    field "content" """Intro body."""
+}
+
+entity "Runbook" "guide" {
+    field "label" "Guide"
+    field "chapters" [ "intro" ]
+}
+"#,
+    ),
+    (
+        "vdl.toml",
+        r#"[build]
+out_dir = "dist"
+
+[[build.markdown]]
+root = "guide"
+output = "guide.md"
+
+[[build.graph]]
+format = "json"
+output = "graph.json"
+
+[[build.graph]]
+format = "dot"
+output = "graph.dot"
+
+[[build.graph]]
+format = "index"
+output = "search.json"
+"#,
+    ),
+];
+
+#[test]
+fn compile_writes_graph_targets_alongside_markdown() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let root = temp.path();
+    write_files(root, GRAPH_PROJECT_FILES);
+
+    let output = run_vdl(["compile", root.to_str().unwrap()]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    let out = stdout(&output);
+    for artifact in ["guide.md", "graph.json", "graph.dot", "search.json"] {
+        assert!(out.contains(artifact), "stdout: {}", out);
+    }
+
+    assert!(root.join("dist/guide.md").is_file());
+    let json = fs::read_to_string(root.join("dist/graph.json")).expect("graph.json written");
+    assert!(json.contains("\"id\": \"guide\""), "{json}");
+    assert!(json.contains("\"field\": \"chapters\""), "{json}");
+    let dot = fs::read_to_string(root.join("dist/graph.dot")).expect("graph.dot written");
+    assert!(dot.contains("digraph VDL_Graph {"), "{dot}");
+    let index = fs::read_to_string(root.join("dist/search.json")).expect("search.json written");
+    assert!(index.contains("\"id\": \"intro\""), "{index}");
+
+    // The build artifact is byte-identical to the `graph` command's stdout.
+    let cli_graph = run_vdl(["graph", root.to_str().unwrap()]);
+    assert_eq!(cli_graph.stdout, json.as_bytes());
+}
+
+#[test]
+fn graph_json_output_is_deterministic_across_compiles() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let root = temp.path();
+    write_files(root, GRAPH_PROJECT_FILES);
+
+    let first = run_vdl(["compile", root.to_str().unwrap()]);
+    assert!(first.status.success(), "{}", stderr(&first));
+    let before = fs::read(root.join("dist/graph.json")).expect("first graph.json");
+
+    fs::remove_dir_all(root.join("dist")).expect("clean dist between compiles");
+    let second = run_vdl(["compile", root.to_str().unwrap()]);
+    assert!(second.status.success(), "{}", stderr(&second));
+    let after = fs::read(root.join("dist/graph.json")).expect("second graph.json");
+
+    assert_eq!(before, after, "equal inputs must produce equal bytes");
+}
+
+#[test]
+fn graph_output_hard_linked_to_a_source_is_rejected() {
+    let (_temp, root) = fresh_project();
+    let schema = root.join("schema.vdl");
+    let before = fs::read(&schema).expect("schema readable");
+    fs::create_dir_all(root.join("dist")).expect("dist directory");
+    fs::hard_link(&schema, root.join("dist/copy.json")).expect("hard link created");
+
+    write_files(
+        &root,
+        &[(
+            "vdl.toml",
+            r#"[build]
+out_dir = "dist"
+
+[[build.markdown]]
+root = "deploy"
+output = "runbooks/deploy.md"
+
+[[build.graph]]
+format = "json"
+output = "copy.json"
+"#,
+        )],
+    );
+
+    let output = run_vdl(["compile", root.to_str().unwrap()]);
+    let err = stderr(&output);
+    assert!(!output.status.success(), "{}", err);
+    assert!(
+        err.contains("refusing to write build output"),
+        "stderr: {}",
+        err
+    );
+    assert!(err.contains("schema.vdl"), "stderr: {}", err);
+    assert_eq!(fs::read(&schema).expect("schema still readable"), before);
+    assert!(
+        !root.join("dist/runbooks/deploy.md").exists(),
+        "markdown must not be written"
+    );
+}
+
+#[test]
+fn unknown_graph_format_is_rejected_by_the_manifest() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let root = temp.path();
+    write_files(root, GRAPH_PROJECT_FILES);
+    write_files(
+        root,
+        &[(
+            "vdl.toml",
+            r#"[build]
+out_dir = "dist"
+
+[[build.markdown]]
+root = "guide"
+output = "guide.md"
+
+[[build.graph]]
+format = "svg"
+output = "graph.svg"
+"#,
+        )],
+    );
+
+    let output = run_vdl(["compile", root.to_str().unwrap()]);
+    let err = stderr(&output);
+    assert!(!output.status.success(), "{}", err);
+    assert!(err.contains("invalid build manifest"), "stderr: {}", err);
+    assert!(
+        err.contains("\"json\", \"dot\", \"index\""),
+        "stderr: {}",
+        err
+    );
+}

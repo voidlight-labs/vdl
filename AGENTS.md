@@ -126,7 +126,10 @@ changing discovery, manifests, or output writing.
 - **One loader serves `validate`, `compose`, and `compile`.**
 - **`vdl.toml` is parsed with `toml` and normalized.** Unknown keys, missing
   fields, and empty target lists produce a manifest-path diagnostic with an
-  example. Per-target render options: `number_headings`, `cites`.
+  example. Per-target render options: `number_headings`, `cites`. Optional
+  `[[build.graph]]` targets write json/dot/index artifacts; Markdown targets
+  are always required, and both target kinds share the `plan_destination`
+  guards in `build.rs`.
 - **Build is plan-then-write.** Every target is checked and all Markdown is
   rendered in memory before anything is written.
 - **Project tests carry the contract.** `tests/project_test.rs` covers the
@@ -162,9 +165,8 @@ parse the fixtures and representative project sources. See
 - **One schema block per project (or per single file).**
 - **No inheritance, executable methods, plugin validators, or external
   content resolvers.**
-- **Graph/index outputs are CLI-only.** `vdl.toml` registers Markdown targets
-  only; there are no manifest targets for graph, DOT, or search-index files,
-  and there is no `diff`.
+- **No `diff`, and no graph-target options.** `[[build.graph]]` always
+  renders the full project graph (no `--root` filter in the manifest).
 - **No cross-project references.** Every referenced ID must be declared in
   the same project.
 

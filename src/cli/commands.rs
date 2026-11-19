@@ -13,17 +13,9 @@ pub struct Cli {
     pub command: Commands,
 }
 
-/// Output format for `vdl graph`.
-#[derive(Debug, Clone, Copy, Default, clap::ValueEnum)]
-pub enum GraphFormat {
-    /// JSON node and edge list.
-    #[default]
-    Json,
-    /// Graphviz DOT digraph.
-    Dot,
-    /// JSON search index over entity content.
-    Index,
-}
+// The graph output format lives with the graph domain and is re-exported so
+// `commands::GraphFormat` keeps working for CLI consumers.
+pub use crate::graph::GraphFormat;
 
 #[derive(Subcommand)]
 pub enum Commands {

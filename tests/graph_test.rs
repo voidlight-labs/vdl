@@ -3,7 +3,7 @@
 //! formats, and determinism.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{Command, Output};
 
 /// Helper: run the `vdl` binary via `cargo run -- <args>`.

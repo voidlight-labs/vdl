@@ -37,12 +37,34 @@ cites = "short"
 
 # Optional per-target heading numbering
 number_headings = true
+
+# Optional graph artifacts rendered from the whole project
+[[build.graph]]
+format = "json"
+output = "graph.json"
+
+[[build.graph]]
+format = "dot"
+output = "graph.dot"
+
+[[build.graph]]
+format = "index"
+output = "search.json"
 ```
 
 `root` is an entity ID. `out_dir` is relative to the project root, and each
 `output` is relative to `out_dir`. Types, fields, relationships, and the
 `heading`/`body`/`compose` rules stay in `.vdl`; the manifest only lists
 build targets and render options (`cites`, `number_headings`).
+
+`[[build.graph]]` entries are optional; at least one `[[build.markdown]]`
+target is always required. `format` is one of `json` (node/edge list),
+`dot` (Graphviz digraph), or `index` (JSON search documents). Each artifact
+is rendered from the whole validated project, matches the `vdl graph` output
+for the same project byte for byte, and its destination passes the same
+safety checks as Markdown targets: it must stay inside `out_dir`, must not
+resolve to a `.vdl` path, and must not alias a source, the manifest, or
+another target. Nothing is written until every target has been planned.
 
 Diagnostics across the project:
 

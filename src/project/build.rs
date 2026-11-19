@@ -1,4 +1,4 @@
-//! Validate every build target, render all Markdown, then write.
+//! Validate every build target, render everything, then write.
 //!
 //! Nothing is written until every target has been checked: the root exists,
 //! the destination stays inside `out_dir` (symlinks included), it does not
@@ -9,10 +9,12 @@
 use crate::codegen::compose::{compose_with_options, ComposeOptions};
 use crate::error::{VdlError, VdlResult};
 use crate::fsutil::{canonical_anchor, paths_alias};
+use crate::graph::GraphFormat;
+use crate::model::SchemaDoc;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::loader::load_schema_project;
+use super::loader::{SchemaProject, load_schema_project};
 use super::manifest::{load_manifest, missing_manifest_error};
 
 /// What a successful build wrote.
@@ -24,7 +26,7 @@ pub struct BuildReport {
 struct PlannedTarget {
     destination: PathBuf,
     anchor: PathBuf,
-    markdown: String,
+    contents: String,
 }
 
 fn check_target_parent_directories(label: &str, destination: &Path) -> VdlResult<()> {
@@ -169,6 +171,153 @@ fn check_symlink_effective_parent(
     Ok(())
 }
 
+/// Validate a target destination and return its canonical anchor.
+///
+/// Shared by Markdown and graph targets: the destination must stay inside
+/// `out_dir` (symlinks included), must not alias a project source, the
+/// manifest, or a previously planned target, and must not resolve to the
+/// `.vdl` source extension.
+fn plan_destination(
+    label: &str,
+    output: &Path,
+    out_dir: &Path,
+    out_anchor: &Path,
+    project: &SchemaProject,
+    planned: &[PlannedTarget],
+) -> VdlResult<PathBuf> {
+    let destination = out_dir.join(output);
+    if !destination.starts_with(out_dir) {
+        return Err(VdlError::Other {
+            message: format!(
+                "{} output '{}' escapes out_dir '{}'",
+                label,
+                output.display(),
+                out_dir.display()
+            ),
+        });
+    }
+    check_target_parent_directories(label, &destination)?;
+    if destination.is_dir() {
+        return Err(VdlError::Other {
+            message: format!(
+                "{} output '{}' is an existing directory; expected a file path",
+                label,
+                destination.display()
+            ),
+        });
+    }
+
+    let destination_anchor = canonical_anchor(&destination).map_err(|e| VdlError::Io {
+        message: format!(
+            "Failed to resolve {} output '{}' at '{}': {}",
+            label,
+            output.display(),
+            destination.display(),
+            e
+        ),
+    })?;
+    if destination_anchor.extension().and_then(|ext| ext.to_str()) == Some("vdl") {
+        return Err(VdlError::Other {
+            message: format!(
+                "{} output '{}' resolves to '{}' with the .vdl source extension; choose a non-.vdl output path",
+                label,
+                output.display(),
+                destination_anchor.display()
+            ),
+        });
+    }
+    if !destination_anchor.starts_with(out_anchor) {
+        return Err(VdlError::Other {
+            message: format!(
+                "{} output '{}' resolves outside out_dir '{}' (symlink target '{}')",
+                label,
+                output.display(),
+                out_dir.display(),
+                destination_anchor.display()
+            ),
+        });
+    }
+    check_symlink_effective_parent(label, &destination, &destination_anchor)?;
+
+    for source in &project.sources {
+        let aliases = paths_alias(&destination, source).map_err(|e| VdlError::Io {
+            message: format!(
+                "Failed to compare build target {} with project source {}: {}",
+                destination.display(),
+                source.display(),
+                e
+            ),
+        })?;
+        if aliases {
+            return Err(VdlError::Other {
+                message: format!(
+                    "refusing to write build output '{}' over project source '{}'",
+                    destination.display(),
+                    source.display()
+                ),
+            });
+        }
+    }
+    if let Some(manifest_path) = &project.manifest_path {
+        let aliases = paths_alias(&destination, manifest_path).map_err(|e| VdlError::Io {
+            message: format!(
+                "Failed to compare build target {} with the build manifest {}: {}",
+                destination.display(),
+                manifest_path.display(),
+                e
+            ),
+        })?;
+        if aliases {
+            return Err(VdlError::Other {
+                message: format!(
+                    "refusing to write build output '{}' over the build manifest '{}'",
+                    destination.display(),
+                    manifest_path.display()
+                ),
+            });
+        }
+    }
+
+    for previous in planned {
+        let overlaps = destination_anchor.starts_with(&previous.anchor)
+            || previous.anchor.starts_with(&destination_anchor);
+        let aliases = paths_alias(&destination, &previous.destination).map_err(|e| VdlError::Io {
+            message: format!(
+                "Failed to compare build targets {} and {}: {}",
+                destination.display(),
+                previous.destination.display(),
+                e
+            ),
+        })?;
+        if overlaps || aliases {
+            return Err(VdlError::Other {
+                message: format!(
+                    "{} output '{}' collides with another target ('{}'); resolved targets '{}' and '{}' overlap or alias",
+                    label,
+                    destination.display(),
+                    previous.destination.display(),
+                    destination_anchor.display(),
+                    previous.anchor.display()
+                ),
+            });
+        }
+    }
+
+    Ok(destination_anchor)
+}
+
+/// Render one graph artifact from the whole project document.
+fn render_graph(doc: &SchemaDoc, format: GraphFormat) -> String {
+    let graph = crate::graph::Graph::build(doc);
+    match format {
+        GraphFormat::Json => crate::graph::json::to_json(&graph),
+        GraphFormat::Dot => crate::graph::dot::to_dot(&graph),
+        GraphFormat::Index => {
+            crate::graph::search::to_json(&crate::graph::search::build_index(doc))
+        }
+    }
+}
+
 /// Compile the schema project rooted at `root` using its `vdl.toml` targets.
 pub fn build_project(root: &Path) -> VdlResult<BuildReport> {
     let project = load_schema_project(root)?;
@@ -219,123 +368,14 @@ pub fn build_project(root: &Path) -> VdlResult<BuildReport> {
         }
 
         let destination = out_dir.join(&target.output);
-        if !destination.starts_with(&out_dir) {
-            return Err(VdlError::Other {
-                message: format!(
-                    "{} output '{}' escapes out_dir '{}'",
-                    label,
-                    target.output.display(),
-                    out_dir.display()
-                ),
-            });
-        }
-        check_target_parent_directories(&label, &destination)?;
-        if destination.is_dir() {
-            return Err(VdlError::Other {
-                message: format!(
-                    "{} output '{}' is an existing directory; expected a file path",
-                    label,
-                    destination.display()
-                ),
-            });
-        }
-
-        let destination_anchor = canonical_anchor(&destination).map_err(|e| VdlError::Io {
-            message: format!(
-                "Failed to resolve {} output '{}' at '{}': {}",
-                label,
-                target.output.display(),
-                destination.display(),
-                e
-            ),
-        })?;
-        if destination_anchor.extension().and_then(|ext| ext.to_str()) == Some("vdl") {
-            return Err(VdlError::Other {
-                message: format!(
-                    "{} output '{}' resolves to '{}' with the .vdl source extension; choose a non-.vdl output path",
-                    label,
-                    target.output.display(),
-                    destination_anchor.display()
-                ),
-            });
-        }
-        if !destination_anchor.starts_with(&out_anchor) {
-            return Err(VdlError::Other {
-                message: format!(
-                    "{} output '{}' resolves outside out_dir '{}' (symlink target '{}')",
-                    label,
-                    target.output.display(),
-                    out_dir.display(),
-                    destination_anchor.display()
-                ),
-            });
-        }
-        check_symlink_effective_parent(&label, &destination, &destination_anchor)?;
-
-        for source in &project.sources {
-            let aliases = paths_alias(&destination, source).map_err(|e| VdlError::Io {
-                message: format!(
-                    "Failed to compare build target {} with project source {}: {}",
-                    destination.display(),
-                    source.display(),
-                    e
-                ),
-            })?;
-            if aliases {
-                return Err(VdlError::Other {
-                    message: format!(
-                        "refusing to write build output '{}' over project source '{}'",
-                        destination.display(),
-                        source.display()
-                    ),
-                });
-            }
-        }
-        if let Some(manifest_path) = &project.manifest_path {
-            let aliases = paths_alias(&destination, manifest_path).map_err(|e| VdlError::Io {
-                message: format!(
-                    "Failed to compare build target {} with the build manifest {}: {}",
-                    destination.display(),
-                    manifest_path.display(),
-                    e
-                ),
-            })?;
-            if aliases {
-                return Err(VdlError::Other {
-                    message: format!(
-                        "refusing to write build output '{}' over the build manifest '{}'",
-                        destination.display(),
-                        manifest_path.display()
-                    ),
-                });
-            }
-        }
-
-        for previous in &rendered {
-            let overlaps = destination_anchor.starts_with(&previous.anchor)
-                || previous.anchor.starts_with(&destination_anchor);
-            let aliases =
-                paths_alias(&destination, &previous.destination).map_err(|e| VdlError::Io {
-                    message: format!(
-                        "Failed to compare build targets {} and {}: {}",
-                        destination.display(),
-                        previous.destination.display(),
-                        e
-                    ),
-                })?;
-            if overlaps || aliases {
-                return Err(VdlError::Other {
-                    message: format!(
-                        "{} output '{}' collides with another target ('{}'); resolved targets '{}' and '{}' overlap or alias",
-                        label,
-                        destination.display(),
-                        previous.destination.display(),
-                        destination_anchor.display(),
-                        previous.anchor.display()
-                    ),
-                });
-            }
-        }
+        let destination_anchor = plan_destination(
+            &label,
+            &target.output,
+            &out_dir,
+            &out_anchor,
+            &project,
+            &rendered,
+        )?;
 
         let markdown = compose_with_options(
             &project.doc,
@@ -348,7 +388,26 @@ pub fn build_project(root: &Path) -> VdlResult<BuildReport> {
         rendered.push(PlannedTarget {
             destination,
             anchor: destination_anchor,
-            markdown,
+            contents: markdown,
+        });
+    }
+
+    for (index, target) in manifest.graph.iter().enumerate() {
+        let label = format!("build.graph[{}]", index + 1);
+        let destination = out_dir.join(&target.output);
+        let destination_anchor = plan_destination(
+            &label,
+            &target.output,
+            &out_dir,
+            &out_anchor,
+            &project,
+            &rendered,
+        )?;
+
+        rendered.push(PlannedTarget {
+            destination,
+            anchor: destination_anchor,
+            contents: render_graph(&project.doc, target.format),
         });
     }
 
@@ -363,7 +422,7 @@ pub fn build_project(root: &Path) -> VdlResult<BuildReport> {
                 ),
             })?;
         }
-        fs::write(&target.destination, target.markdown).map_err(|e| VdlError::Io {
+        fs::write(&target.destination, target.contents).map_err(|e| VdlError::Io {
             message: format!("Failed to write {}: {}", target.destination.display(), e),
         })?;
         outputs.push(target.destination);
@@ -471,5 +530,101 @@ output = "missing.md"
         let err = build_project(root).unwrap_err().to_string();
         assert!(err.contains("missing"), "{}", err);
         assert!(!root.join("dist/missing.md").exists());
+    }
+
+    const GRAPH_MANIFEST: &str = r#"[build]
+out_dir = "dist"
+
+[[build.markdown]]
+root = "a"
+output = "a.md"
+
+[[build.graph]]
+format = "json"
+output = "graph.json"
+
+[[build.graph]]
+format = "dot"
+output = "graph.dot"
+
+[[build.graph]]
+format = "index"
+output = "search.json"
+"#;
+
+    #[test]
+    fn graph_targets_are_written_alongside_markdown() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        write(root, "schema.vdl", SCHEMA);
+        write(root, "doc.vdl", DOC);
+        write(root, "vdl.toml", GRAPH_MANIFEST);
+
+        let report = build_project(root).expect("build succeeds");
+        assert_eq!(report.outputs.len(), 4);
+
+        let json = fs::read_to_string(root.join("dist/graph.json")).expect("graph.json written");
+        assert!(json.contains("\"nodes\""), "{json}");
+        assert!(json.contains("\"id\": \"a\""), "{json}");
+        let dot = fs::read_to_string(root.join("dist/graph.dot")).expect("graph.dot written");
+        assert!(dot.contains("digraph VDL_Graph {"), "{dot}");
+        let index = fs::read_to_string(root.join("dist/search.json")).expect("search.json written");
+        assert!(index.contains("\"content\""), "{index}");
+    }
+
+    #[test]
+    fn graph_target_colliding_with_markdown_target_is_rejected() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        write(root, "schema.vdl", SCHEMA);
+        write(root, "doc.vdl", DOC);
+        write(
+            root,
+            "vdl.toml",
+            r#"[build]
+out_dir = "dist"
+
+[[build.markdown]]
+root = "a"
+output = "same.md"
+
+[[build.graph]]
+format = "json"
+output = "./same.md"
+"#,
+        );
+
+        let err = build_project(root).unwrap_err().to_string();
+        assert!(err.contains("collides"), "{}", err);
+        assert!(err.contains("build.graph[1]"), "{}", err);
+        assert!(!root.join("dist/same.md").exists());
+    }
+
+    #[test]
+    fn graph_output_vdl_extension_is_rejected() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        write(root, "schema.vdl", SCHEMA);
+        write(root, "doc.vdl", DOC);
+        write(
+            root,
+            "vdl.toml",
+            r#"[build]
+out_dir = "dist"
+
+[[build.markdown]]
+root = "a"
+output = "a.md"
+
+[[build.graph]]
+format = "json"
+output = "generated.vdl"
+"#,
+        );
+
+        let err = build_project(root).unwrap_err().to_string();
+        assert!(err.contains("build.graph[1]"), "{}", err);
+        assert!(err.contains(".vdl source extension"), "{}", err);
+        assert!(!root.join("dist/a.md").exists());
     }
 }
