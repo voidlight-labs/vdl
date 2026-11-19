@@ -12,6 +12,10 @@
 //! [[build.graph]]
 //! format = "json"
 //! output = "graph.json"
+//!
+//! [[build.toc]]
+//! root = "deploy"
+//! output = "toc.md"
 //! ```
 //!
 //! `root` is an entity ID; `output` is relative to `out_dir`, and `out_dir` is
@@ -21,8 +25,9 @@
 //! `none`) chooses how `cite`-flagged reference fields render at their cite
 //! points; `short` renders each target's heading-field text, `link` its ID.
 //! `[[build.graph]]` entries are optional graph artifacts (`format` is
-//! `json`, `dot`, or `index`) rendered from the whole project; at least one
-//! `[[build.markdown]]` target is always required.
+//! `json`, `dot`, or `index`) rendered from the whole project;
+//! `[[build.toc]]` entries render a composed heading outline per root; at
+//! least one `[[build.markdown]]` target is always required.
 
 use crate::codegen::compose::CiteMode;
 use crate::error::{VdlError, VdlResult};
@@ -58,6 +63,8 @@ pub struct Manifest {
     pub markdown: Vec<MarkdownTarget>,
     /// Optional graph artifacts, rendered after the Markdown targets.
     pub graph: Vec<GraphTarget>,
+    /// Optional heading outlines, rendered last.
+    pub toc: Vec<TocTarget>,
 }
 
 /// One `[[build.markdown]]` entry.
@@ -70,6 +77,9 @@ pub struct MarkdownTarget {
     pub number_headings: bool,
     /// How `cite`-flagged reference fields render at their cite points.
     pub cites: CiteMode,
+    /// Render cites that point at other registered Markdown targets as
+    /// relative Markdown links (in `link` cite mode).
+    pub cite_links: bool,
 }
 
 /// One `[[build.graph]]` entry.
@@ -79,6 +89,16 @@ pub struct GraphTarget {
     pub format: GraphFormat,
     /// Relative to [`Manifest::out_dir`], normalized.
     pub output: PathBuf,
+}
+
+/// One `[[build.toc]]` entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TocTarget {
+    pub root: String,
+    /// Relative to [`Manifest::out_dir`], normalized.
+    pub output: PathBuf,
+    /// Prefix outline entries with their composed position.
+    pub number_headings: bool,
 }
 
 #[derive(Deserialize)]
@@ -93,6 +113,7 @@ struct RawBuild {
     out_dir: Option<String>,
     markdown: Option<Vec<RawTarget>>,
     graph: Option<Vec<RawGraphTarget>>,
+    toc: Option<Vec<RawTocTarget>>,
 }
 
 #[derive(Deserialize)]
@@ -104,6 +125,8 @@ struct RawTarget {
     number_headings: bool,
     #[serde(default)]
     cites: Option<String>,
+    #[serde(default)]
+    cite_links: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -111,6 +134,15 @@ struct RawTarget {
 struct RawGraphTarget {
     format: Option<String>,
     output: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawTocTarget {
+    root: Option<String>,
+    output: Option<String>,
+    #[serde(default)]
+    number_headings: bool,
 }
 
 /// Map the manifest's `cites` key onto [`CiteMode`], rejecting unknown values
@@ -227,6 +259,7 @@ pub fn load_manifest(root: &Path) -> VdlResult<Option<Manifest>> {
             output,
             number_headings: target.number_headings,
             cites,
+            cite_links: target.cite_links.unwrap_or(false),
         });
     }
 
@@ -270,7 +303,35 @@ pub fn load_manifest(root: &Path) -> VdlResult<Option<Manifest>> {
         graph.push(GraphTarget { format, output });
     }
 
-    Ok(Some(Manifest { out_dir, markdown, graph }))
+    let mut toc = Vec::with_capacity(build.toc.as_ref().map_or(0, Vec::len));
+    for (index, target) in build.toc.unwrap_or_default().into_iter().enumerate() {
+        let label = format!("build.toc[{}]", index + 1);
+
+        let root = match target.root {
+            Some(root) if !root.trim().is_empty() => root,
+            Some(_) => {
+                return Err(invalid(&path, format!("{} root must not be empty", label)));
+            }
+            None => {
+                return Err(invalid(&path, format!("{} is missing root", label)));
+            }
+        };
+
+        let raw_output = match target.output {
+            Some(output) if !output.trim().is_empty() => output,
+            Some(_) => {
+                return Err(invalid(&path, format!("{} output must not be empty", label)));
+            }
+            None => {
+                return Err(invalid(&path, format!("{} is missing output", label)));
+            }
+        };
+        let output = relative_path(&raw_output, &format!("{} output", label), &path, false)?;
+
+        toc.push(TocTarget { root, output, number_headings: target.number_headings });
+    }
+
+    Ok(Some(Manifest { out_dir, markdown, graph, toc }))
 }
 
 /// Normalize a manifest path and reject anything that leaves the project.
@@ -465,6 +526,67 @@ output = "graph.json"
 format = "dot"
 output = "./nested/graph.dot"
 "#;
+
+    #[test]
+    fn toc_targets_are_parsed_with_their_options() {
+        let (_temp, root) = write_manifest(
+            r#"[build]
+out_dir = "dist"
+
+[[build.markdown]]
+root = "deploy"
+output = "deploy.md"
+
+[[build.toc]]
+root = "deploy"
+output = "./nested/toc.md"
+number_headings = true
+"#,
+        );
+        let manifest = load_manifest(&root).unwrap().expect("manifest present");
+        assert_eq!(manifest.toc.len(), 1);
+        assert_eq!(manifest.toc[0].root, "deploy");
+        assert_eq!(manifest.toc[0].output, PathBuf::from("nested/toc.md"));
+        assert!(manifest.toc[0].number_headings);
+    }
+
+    #[test]
+    fn toc_target_missing_root_is_rejected() {
+        let (_temp, root) = write_manifest(
+            r#"[build]
+out_dir = "dist"
+
+[[build.markdown]]
+root = "deploy"
+output = "deploy.md"
+
+[[build.toc]]
+output = "toc.md"
+"#,
+        );
+        let err = load_manifest(&root).unwrap_err().to_string();
+        assert!(err.contains("build.toc[1] is missing root"), "{}", err);
+    }
+
+    #[test]
+    fn cite_links_defaults_to_false_and_parses_true() {
+        let (_temp, root) = write_manifest(
+            r#"[build]
+out_dir = "dist"
+
+[[build.markdown]]
+root = "deploy"
+output = "deploy.md"
+cite_links = true
+"#,
+        );
+        let manifest = load_manifest(&root).unwrap().expect("manifest present");
+        assert!(manifest.markdown[0].cite_links);
+
+        let (_temp, root) = write_manifest(VALID);
+        let manifest = load_manifest(&root).unwrap().expect("manifest present");
+        assert!(!manifest.markdown[0].cite_links);
+    }
 
     #[test]
     fn graph_targets_are_parsed_and_normalized() {

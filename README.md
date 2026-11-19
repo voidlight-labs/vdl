@@ -7,7 +7,7 @@
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
   <img src="https://img.shields.io/badge/tests-128%20passed-brightgreen.svg" alt="Tests: 128 passed">
-  <img src="https://img.shields.io/badge/validation%20rules-V1%E2%80%93V16-orange.svg" alt="Validation rules V1-V16">
+  <img src="https://img.shields.io/badge/validation%20rules-V1%E2%80%93V17-orange.svg" alt="Validation rules V1-V17">
   <img src="https://img.shields.io/badge/rust-edition%202021-dea584.svg" alt="Rust edition 2021">
 </p>
 
@@ -97,7 +97,7 @@ vdl compose . --root core-guide
 | [docs/grammar.md](docs/grammar.md) | Grammar reference: schema form |
 | [docs/schema-projects.md](docs/schema-projects.md) | Multi-file projects, `vdl.toml` manifests, project diagnostics |
 | [docs/composition.md](docs/composition.md) | Compose output, labels, heading numbering, cite rendering, build safety |
-| [docs/validation.md](docs/validation.md) | Validation rules V1–V16 and project diagnostics |
+| [docs/validation.md](docs/validation.md) | Validation rules V1–V17 and project diagnostics |
 | [docs/cli.md](docs/cli.md) | Every command and its flags |
 | [docs/architecture.md](docs/architecture.md) | Compiler stages, project layout, dependencies |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | Planned, postponed, and completed work |

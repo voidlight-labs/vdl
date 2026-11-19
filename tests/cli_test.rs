@@ -247,6 +247,41 @@ fn search_prints_no_matches() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// stats
+// ---------------------------------------------------------------------------
+
+#[test]
+fn stats_reports_population_per_field() {
+    let output = run_vdl(["stats", "tests/fixtures/schema/runbooks.vdl"]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success());
+    assert!(stdout.contains("Runbook (2 entities)"), "stdout: {}", stdout);
+    assert!(stdout.contains("chapters  2/2"), "stdout: {}", stdout);
+    assert!(stdout.contains("required [ref Chapter]"), "stdout: {}", stdout);
+    // No runbook references another runbook.
+    assert!(
+        stdout.contains("Never referenced (2):"),
+        "stdout: {}",
+        stdout
+    );
+}
+
+#[test]
+fn stats_json_flag_emits_a_report_object() {
+    let output = run_vdl([
+        "stats",
+        "tests/fixtures/schema/runbooks.vdl",
+        "--json",
+    ]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success());
+    assert!(stdout.contains("\"entities\": 5"), "stdout: {}", stdout);
+    assert!(stdout.contains("\"orphans\""), "stdout: {}", stdout);
+}
+
 #[test]
 fn compile_empty_directory_requires_manifest() {
     let dir = tempfile::tempdir().unwrap();

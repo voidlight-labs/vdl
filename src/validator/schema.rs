@@ -20,6 +20,7 @@
 //! | V13 | `ref` field whose declared target type is undeclared (empty list included) |
 //! | V14 | the same field supplied twice in one instance |
 //! | V16 | `cite` on a non-`ref` field |
+//! | V17 | text value outside the field's declared `in [...]` list, or a value restriction on a non-`text` field |
 
 use crate::error::{SourceLocation, VdlError, VdlResult};
 use crate::model::{body_include_directives, resolve_include_candidates, FieldKind, SchemaDoc, TypeDecl, Value};
@@ -41,6 +42,69 @@ pub fn collect_schema_errors(doc: &SchemaDoc) -> Vec<ValidationError> {
     errors.extend(check_instances(doc));
     errors.extend(check_references(doc));
     errors.extend(check_body_includes(doc));
+    errors.extend(check_enum_values(doc));
+    errors
+}
+
+/// V17: `text in [...]` value restrictions.
+///
+/// A restriction is only meaningful on a text field, and every supplied value
+/// must be one of the declared strings.
+fn check_enum_values(doc: &SchemaDoc) -> Vec<ValidationError> {
+    let mut errors = Vec::new();
+    for type_decl in &doc.schema.types {
+        for field in &type_decl.fields {
+            if field.allowed_values.is_empty() {
+                continue;
+            }
+            if !matches!(field.kind, FieldKind::Text) {
+                errors.push(violation(
+                    &field.source_location,
+                    format!(
+                        "field '{}' of type '{}' restricts allowed values, but its kind is '{}'; only text fields can be restricted",
+                        field.name, type_decl.name, field.kind
+                    ),
+                ));
+            }
+        }
+    }
+    for instance in &doc.entities {
+        let Some(type_decl) = doc.type_decl(&instance.type_name) else {
+            continue;
+        };
+        for value in &instance.values {
+            let Some(field) = type_decl.field(&value.name) else {
+                continue;
+            };
+            if field.allowed_values.is_empty() || !matches!(field.kind, FieldKind::Text) {
+                // An invalid restriction is owned by the declaration
+                // diagnostic; instance values would only duplicate it.
+                continue;
+            }
+            match &value.value {
+                Value::Text(text) if field.allowed_values.contains(text) => {}
+                Value::Text(text) => errors.push(violation(
+                    &value.source_location,
+                    format!(
+                        "entity '{}' field '{}' has value \"{}\"; allowed values are [{}]",
+                        instance.id,
+                        field.name,
+                        text,
+                        field.allowed_values.join(", ")
+                    ),
+                )),
+                _ => errors.push(violation(
+                    &value.source_location,
+                    format!(
+                        "entity '{}' field '{}' requires a text value from [{}]",
+                        instance.id,
+                        field.name,
+                        field.allowed_values.join(", ")
+                    ),
+                )),
+            }
+        }
+    }
     errors
 }
 
@@ -887,5 +951,56 @@ entity "B" "b" { field "label" "x" }
             Err(VdlError::ValidationErrors { count, .. }) => assert_eq!(count, 2),
             other => panic!("expected ValidationErrors, got {:?}", other),
         }
+    }
+
+    // -- V17 ---------------------------------------------------------------
+
+    const ENUM_BASE: &str = r#"
+schema "s" {
+    type "Item" {
+        field "label" text heading
+        field "status" text in ["draft", "verified"] optional
+    }
+}
+
+entity "Item" "a" {
+    field "label" "A"
+    field "status" "verified"
+}
+"#;
+
+    #[test]
+    fn v17_enum_values_within_the_list_pass() {
+        assert!(messages(ENUM_BASE).is_empty(), "{:?}", messages(ENUM_BASE));
+    }
+
+    #[test]
+    fn v17_value_outside_the_list_is_rejected() {
+        let src = ENUM_BASE.replace("field \"status\" \"verified\"", "field \"status\" \"published\"");
+        assert_single(&src, "allowed values are [draft, verified]");
+    }
+
+    #[test]
+    fn v17_restriction_on_a_non_text_field_is_rejected() {
+        let src = r#"
+schema "s" {
+    type "A" {
+        field "label" text heading
+        field "content" body in ["a"]
+    }
+}
+
+entity "A" "a" {
+    field "label" "A"
+    field "content" """a"""
+}
+"#;
+        assert_single(&src, "only text fields can be restricted");
+    }
+
+    #[test]
+    fn v17_missing_optional_enum_field_is_fine() {
+        let src = ENUM_BASE.replace("    field \"status\" \"verified\"\n", "");
+        assert!(messages(&src).is_empty(), "{:?}", messages(&src));
     }
 }

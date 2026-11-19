@@ -11,8 +11,10 @@ use crate::error::{VdlError, VdlResult};
 use crate::fsutil::{canonical_anchor, paths_alias};
 use crate::graph::GraphFormat;
 use crate::model::SchemaDoc;
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 use super::loader::{SchemaProject, load_schema_project};
 use super::manifest::{load_manifest, missing_manifest_error};
@@ -318,6 +320,34 @@ fn render_graph(doc: &SchemaDoc, format: GraphFormat) -> String {
     }
 }
 
+/// Render `to` as a Markdown link target relative to `from_dir`, with
+/// forward slashes and spaces percent-encoded.
+fn relative_link(from_dir: &Path, to: &Path) -> String {
+    let from: Vec<_> = from_dir.components().collect();
+    let to_components: Vec<_> = to.components().collect();
+    let common = from
+        .iter()
+        .zip(to_components.iter())
+        .take_while(|(a, b)| a == b)
+        .count();
+    let mut parts: Vec<String> = std::iter::repeat("..".to_string())
+        .take(from.len().saturating_sub(common))
+        .collect();
+    parts.extend(
+        to_components[common.min(to_components.len())..]
+            .iter()
+            .map(|component| component.as_os_str().to_string_lossy().to_string()),
+    );
+    if parts.is_empty() {
+        parts.push(
+            to.file_name()
+                .map(|name| name.to_string_lossy().to_string())
+                .unwrap_or_default(),
+        );
+    }
+    parts.join("/").replace(' ', "%20")
+}
+
 /// Compile the schema project rooted at `root` using its `vdl.toml` targets.
 pub fn build_project(root: &Path) -> VdlResult<BuildReport> {
     let project = load_schema_project(root)?;
@@ -377,10 +407,34 @@ pub fn build_project(root: &Path) -> VdlResult<BuildReport> {
             &rendered,
         )?;
 
+        let cite_links = target
+            .cite_links
+            .then(|| {
+                let links: HashMap<String, String> = manifest
+                    .markdown
+                    .iter()
+                    .map(|other| {
+                        let other_destination = out_dir.join(&other.output);
+                        (
+                            other.root.clone(),
+                            relative_link(
+                                destination.parent().unwrap_or(&out_dir),
+                                &other_destination,
+                            ),
+                        )
+                    })
+                    .collect();
+                Rc::new(links)
+            });
+
         let markdown = compose_with_options(
             &project.doc,
             &target.root,
-            &ComposeOptions { cites: target.cites, number_headings: target.number_headings },
+            &ComposeOptions {
+                cites: target.cites,
+                number_headings: target.number_headings,
+                cite_links,
+            },
         )
         .map_err(|e| VdlError::Other {
             message: format!("{} root '{}': {}", label, target.root, e),
@@ -408,6 +462,47 @@ pub fn build_project(root: &Path) -> VdlResult<BuildReport> {
             destination,
             anchor: destination_anchor,
             contents: render_graph(&project.doc, target.format),
+        });
+    }
+
+    for (index, target) in manifest.toc.iter().enumerate() {
+        let label = format!("build.toc[{}]", index + 1);
+        if project.doc.instance(&target.root).is_none() {
+            return Err(VdlError::Other {
+                message: format!(
+                    "{} root '{}' is not an entity in project '{}'; declare it in a .vdl source or fix the manifest",
+                    label,
+                    target.root,
+                    project.root.display()
+                ),
+            });
+        }
+        let destination = out_dir.join(&target.output);
+        let destination_anchor = plan_destination(
+            &label,
+            &target.output,
+            &out_dir,
+            &out_anchor,
+            &project,
+            &rendered,
+        )?;
+
+        let contents = crate::codegen::compose::compose_toc(
+            &project.doc,
+            &target.root,
+            &ComposeOptions {
+                cites: crate::codegen::compose::CiteMode::None,
+                number_headings: target.number_headings,
+                cite_links: None,
+            },
+        )
+        .map_err(|e| VdlError::Other {
+            message: format!("{} root '{}': {}", label, target.root, e),
+        })?;
+        rendered.push(PlannedTarget {
+            destination,
+            anchor: destination_anchor,
+            contents,
         });
     }
 

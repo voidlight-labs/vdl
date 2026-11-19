@@ -117,11 +117,15 @@ file-local, so moving a source file does not change its imports or entity IDs.
 | Declaration | Value form | Meaning |
 |-------------|------------|---------|
 | `field "<name>" text` | `"..."` | Single-line quoted string |
+| `field "<name>" text in ["a", "b"]` | `"..."` | Single-line quoted string restricted to the listed values |
 | `field "<name>" body` | Multiline `{ … }` or `"""..."""` | Raw Markdown |
 | `field "<name>" ref "<Type>"` | `[ "id", "id" ]` | Ordered collection of entity IDs of type `<Type>` |
 | `field "<name>" ref ["<TypeA>", "<TypeB>"]` | `[ "id", "id" ]` | Ordered collection whose IDs can have any listed type |
 
-Every `ref` is a collection. Declared fields are required by default.
+Every `ref` is a collection. Declared fields are required by default. The
+`in` restriction is a contextual keyword (a field may still be named `in`),
+applies to `text` kinds only (validated by V17), and combines freely with
+other modifiers, e.g. `field "status" text in ["draft", "verified"] optional`.
 
 ### Modifiers
 

@@ -29,15 +29,20 @@ pub enum CiteMode {
 }
 
 /// Options controlling composition output.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct ComposeOptions {
     pub cites: CiteMode,
     pub number_headings: bool,
+    /// Entity ID → Markdown link path for cited entities that have their own
+    /// compiled output, already relative to the document being rendered.
+    /// Set only by multi-target builds; `cite` fields render as links in
+    /// `Link` mode when the target is present here.
+    pub cite_links: Option<std::rc::Rc<std::collections::HashMap<String, String>>>,
 }
 
 impl Default for ComposeOptions {
     fn default() -> Self {
-        Self { cites: CiteMode::None, number_headings: false }
+        Self { cites: CiteMode::None, number_headings: false, cite_links: None }
     }
 }
 
@@ -58,7 +63,11 @@ pub(crate) fn compose_with_numbering(
     root_id: &str,
     number_headings: bool,
 ) -> VdlResult<String> {
-    compose_with_options(doc, root_id, &ComposeOptions { cites: CiteMode::None, number_headings })
+    compose_with_options(
+        doc,
+        root_id,
+        &ComposeOptions { cites: CiteMode::None, number_headings, cite_links: None },
+    )
 }
 
 /// Compose the document rooted at `root_id` with explicit options.
@@ -104,6 +113,60 @@ pub fn compose_with_options(
         output.push('\n');
         output.push_str(&blocks.join("\n\n"));
         output.push('\n');
+    }
+    Ok(output)
+}
+
+/// One outline entry: heading level (1 = root) and its rendered title.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OutlineEntry {
+    pub level: usize,
+    pub title: String,
+}
+
+/// Compose a table of contents for the document rooted at `root_id`: the
+/// composed heading tree without bodies or preamble. Body `include`
+/// directives contribute their targets; inline fields contribute nothing,
+/// because inline entities render without headings. Numbering matches
+/// [`compose_with_options`] when `number_headings` is set.
+///
+/// # Errors
+///
+/// Same guarantees as [`compose`].
+pub fn compose_toc(doc: &SchemaDoc, root_id: &str, options: &ComposeOptions) -> VdlResult<String> {
+    validate_schema(doc)?;
+
+    let root = doc.instance(root_id).ok_or_else(|| VdlError::Codegen {
+        message: format!(
+            "root entity '{}' not found in schema document '{}'",
+            root_id, doc.schema.name
+        ),
+    })?;
+    let root_type = doc.type_decl(&root.type_name).ok_or_else(|| VdlError::Codegen {
+        message: format!(
+            "root entity '{}' has undeclared type '{}'",
+            root.id, root.type_name
+        ),
+    })?;
+
+    let mut entries = Vec::new();
+    render_outline(
+        doc,
+        root,
+        root_type,
+        &mut Vec::new(),
+        &mut entries,
+        options.number_headings.then_some(""),
+        options,
+    )?;
+
+    let mut output = String::new();
+    for entry in &entries {
+        output.push_str(&format!(
+            "{}- {}\n",
+            "  ".repeat(entry.level.saturating_sub(1)),
+            entry.title
+        ));
     }
     Ok(output)
 }
@@ -270,6 +333,180 @@ fn render_body_includes<'doc>(
     Ok(())
 }
 
+/// The heading tree of [`render_entity`], with bodies, preamble, and inline
+/// fields skipped. Keep the heading, numbering, and recursion in sync with
+/// [`render_entity`].
+fn render_outline<'doc>(
+    doc: &'doc SchemaDoc,
+    entity: &'doc Instance,
+    entity_type: &'doc TypeDecl,
+    ancestors: &mut Vec<&'doc str>,
+    entries: &mut Vec<OutlineEntry>,
+    section_number: Option<&str>,
+    options: &ComposeOptions,
+) -> VdlResult<()> {
+    let id = entity.id.as_str();
+    if ancestors.contains(&id) {
+        let chain = ancestors.iter().copied().chain([id]).collect::<Vec<_>>();
+        return Err(VdlError::Codegen {
+            message: format!("composition cycle: {}", chain.join(" -> ")),
+        });
+    }
+    let level = ancestors.len() + 1;
+    if level > 6 {
+        return Err(VdlError::Codegen {
+            message: format!("composition of '{}' exceeds Markdown's six heading levels", id),
+        });
+    }
+    if let Some(heading) = heading_text(entity, entity_type) {
+        let title = match section_number {
+            Some(number) if level == 2 => format!("{}. {}", number, heading),
+            Some(number) if level > 2 => format!("{} {}", number, heading),
+            _ => heading,
+        };
+        entries.push(OutlineEntry { level, title });
+    }
+    ancestors.push(id);
+    let mut child_index = 0usize;
+    if let Some(body_field) = entity_type.body_field() {
+        if let Some(Value::BracedBody(body)) = entity.value(&body_field.name) {
+            if !body_field.compose_targets.is_empty() {
+                outline_body_includes(
+                    doc,
+                    entity,
+                    entity_type,
+                    body,
+                    ancestors,
+                    entries,
+                    section_number,
+                    &mut child_index,
+                    options,
+                )?;
+            }
+        }
+    }
+    for field in entity_type.composed_fields() {
+        let Some(value) = entity.value(&field.name) else {
+            continue;
+        };
+        if field.inline {
+            // Inline entities render without headings, so they are absent
+            // from the outline.
+            continue;
+        }
+        let Value::Refs(ids) = value else {
+            continue;
+        };
+        for id in ids {
+            let target = doc.instance(id).ok_or_else(|| VdlError::Codegen {
+                message: format!(
+                    "entity '{}' field '{}' references unresolved entity '{}'",
+                    entity.id, field.name, id
+                ),
+            })?;
+            let target_type = doc.type_decl(&target.type_name).ok_or_else(|| VdlError::Codegen {
+                message: format!(
+                    "entity '{}' has undeclared type '{}'",
+                    target.id, target.type_name
+                ),
+            })?;
+            child_index += 1;
+            let child_number = section_number.map(|parent| {
+                if parent.is_empty() {
+                    child_index.to_string()
+                } else {
+                    format!("{}.{}", parent, child_index)
+                }
+            });
+            render_outline(
+                doc,
+                target,
+                target_type,
+                ancestors,
+                entries,
+                child_number.as_deref(),
+                options,
+            )?;
+        }
+    }
+    ancestors.pop();
+    Ok(())
+}
+
+/// The include-directive walk of [`render_body_includes`], for outlines.
+fn outline_body_includes<'doc>(
+    doc: &'doc SchemaDoc,
+    entity: &'doc Instance,
+    entity_type: &'doc TypeDecl,
+    body: &str,
+    ancestors: &mut Vec<&'doc str>,
+    entries: &mut Vec<OutlineEntry>,
+    section_number: Option<&str>,
+    child_index: &mut usize,
+    options: &ComposeOptions,
+) -> VdlResult<()> {
+    let directives = body_include_directives(body)
+        .into_iter()
+        .map(|(line, id)| (line, id.to_owned()))
+        .collect::<std::collections::HashMap<_, _>>();
+    for (line_index, _line) in body.lines().enumerate() {
+        if let Some(name) = directives.get(&line_index).map(String::as_str) {
+            let candidates = resolve_include_candidates(entity, name, doc);
+            let target_id = match candidates.as_slice() {
+                [id] => id.clone(),
+                [] => return Err(VdlError::Codegen {
+                    message: format!("body include '{}' has no matching target", name),
+                }),
+                many => return Err(VdlError::Codegen {
+                    message: format!("body include '{}' is ambiguous: {}", name, many.join(", ")),
+                }),
+            };
+            let target = doc.instance(&target_id).ok_or_else(|| VdlError::Codegen {
+                message: format!(
+                    "entity '{}' body includes unresolved entity '{}'",
+                    entity.id, target_id
+                ),
+            })?;
+            let target_type = doc.type_decl(&target.type_name).ok_or_else(|| VdlError::Codegen {
+                message: format!(
+                    "included entity '{}' has undeclared type '{}'",
+                    target.id, target.type_name
+                ),
+            })?;
+            let body_field = entity_type.body_field().expect("body compose is a body field");
+            if !body_field.compose_targets.iter().any(|t| t == &target.type_name) {
+                return Err(VdlError::Codegen {
+                    message: format!(
+                        "entity '{}' body include '{}' has type '{}'; expected one of [{}]",
+                        entity.id,
+                        name,
+                        target.type_name,
+                        body_field.compose_targets.join(", ")
+                    ),
+                });
+            }
+            *child_index += 1;
+            let number = section_number.map(|parent| {
+                if parent.is_empty() {
+                    child_index.to_string()
+                } else {
+                    format!("{}.{}", parent, child_index)
+                }
+            });
+            render_outline(
+                doc,
+                target,
+                target_type,
+                ancestors,
+                entries,
+                number.as_deref(),
+                options,
+            )?;
+        }
+    }
+    Ok(())
+}
+
 fn inline_body(doc: &SchemaDoc, id: &str, options: &ComposeOptions) -> VdlResult<String> {
     let body = doc.instance(id).and_then(|target| {
         let target_type = doc.type_decl(&target.type_name)?;
@@ -336,7 +573,9 @@ fn entity_preamble<'doc>(
         }
         let rendered = ids
             .iter()
-            .map(|id| cite_target(doc, id, options.cites))
+            .map(|id| {
+                cite_target(doc, id, options.cites, options.cite_links.as_deref())
+            })
             .collect::<Vec<_>>()
             .join(", ");
         lines.push(format!("**Cites:** {}", rendered));
@@ -345,10 +584,20 @@ fn entity_preamble<'doc>(
 }
 
 /// How one cited target renders: its heading-field text in short mode, its ID
-/// otherwise. Unresolved or heading-less targets fall back to the ID.
-fn cite_target(doc: &SchemaDoc, id: &str, mode: CiteMode) -> String {
+/// otherwise. Unresolved or heading-less targets fall back to the ID. In link
+/// mode, a target with its own compiled output renders as a Markdown link.
+fn cite_target(
+    doc: &SchemaDoc,
+    id: &str,
+    mode: CiteMode,
+    links: Option<&std::collections::HashMap<String, String>>,
+) -> String {
     match mode {
-        CiteMode::Link | CiteMode::None => id.to_owned(),
+        CiteMode::Link => match links.and_then(|links| links.get(id)) {
+            Some(path) => format!("[{id}]({path})"),
+            None => id.to_owned(),
+        },
+        CiteMode::None => id.to_owned(),
         CiteMode::Short => {
             let Some(instance) = doc.instance(id) else { return id.to_owned() };
             let Some(type_decl) = doc.type_decl(&instance.type_name) else { return id.to_owned() };
@@ -620,6 +869,94 @@ entity "Doc" "doc" {
 }
 "#;
 
+    const TOC_DOC: &str = r#"
+schema "toc" {
+    type "Doc" {
+        field "label" text heading
+        field "parts" ref "Part" compose
+    }
+    type "Part" {
+        field "label" text heading
+        field "content" body compose ["Part", "Step"] optional
+        field "steps" ref "Step" compose optional
+    }
+    type "Step" {
+        field "label" text heading
+        field "content" body
+    }
+}
+
+entity "Step" "step-one" {
+    field "label" "Step One"
+    field "content" """Do the thing."""
+}
+
+entity "Step" "step-two" {
+    field "label" "Step Two"
+    field "content" """Do it again."""
+}
+
+entity "Part" "part-alpha" {
+    field "label" "Part Alpha"
+    field "content" {
+        Alpha prose.
+
+        include step-one
+    }
+    field "steps" [ "step-two" ]
+}
+
+entity "Doc" "doc-root" {
+    field "label" "Root Doc"
+    field "parts" [ "part-alpha" ]
+}
+"#;
+
+    #[test]
+    fn compose_toc_lists_the_composed_heading_tree() {
+        let md = compose_toc(&doc(TOC_DOC), "doc-root", &ComposeOptions::default())
+            .expect("toc composes");
+        let expected = "- Root Doc\n  - Part Alpha\n    - Step One\n    - Step Two\n";
+        assert_eq!(md, expected);
+    }
+
+    #[test]
+    fn compose_toc_numbers_like_the_composed_document() {
+        let doc = doc(TOC_DOC);
+        let md = compose_toc(
+            &doc,
+            "doc-root",
+            &ComposeOptions { cites: CiteMode::None, number_headings: true, cite_links: None },
+        )
+        .expect("toc composes");
+        let expected = "- Root Doc\n  - 1. Part Alpha\n    - 1.1 Step One\n    - 1.2 Step Two\n";
+        assert_eq!(md, expected);
+    }
+
+    #[test]
+    fn compose_toc_rejects_cycles_like_the_full_composition() {
+        let source = r#"
+schema "c" {
+    type "Node" {
+        field "label" text heading
+        field "next" ref "Node" compose optional
+    }
+}
+
+entity "Node" "a" {
+    field "label" "A"
+    field "next" [ "b" ]
+}
+
+entity "Node" "b" {
+    field "label" "B"
+    field "next" [ "a" ]
+}
+"#;
+        let error = compose_toc(&doc(source), "a", &ComposeOptions::default()).unwrap_err();
+        assert!(error.to_string().contains("composition cycle"), "{}", error);
+    }
+
     #[test]
     fn cite_mode_none_renders_no_cite_lines() {
         let md = compose_with(CITE_DOC, &ComposeOptions::default());
@@ -629,13 +966,43 @@ entity "Doc" "doc" {
 
     #[test]
     fn cite_mode_link_renders_target_ids() {
-        let md = compose_with(CITE_DOC, &ComposeOptions { cites: CiteMode::Link, number_headings: false });
+        let md = compose_with(CITE_DOC, &ComposeOptions { cites: CiteMode::Link, number_headings: false, cite_links: None });
+        assert!(md.contains("**Cites:** r1"), "{}", md);
+    }
+
+    #[test]
+    fn cite_mode_link_renders_registered_outputs_as_links() {
+        let mut links = std::collections::HashMap::new();
+        links.insert("r1".to_string(), "refs/r1.md".to_string());
+        let md = compose_with(
+            CITE_DOC,
+            &ComposeOptions {
+                cites: CiteMode::Link,
+                number_headings: false,
+                cite_links: Some(std::rc::Rc::new(links)),
+            },
+        );
+        assert!(md.contains("**Cites:** [r1](refs/r1.md)"), "{}", md);
+    }
+
+    #[test]
+    fn cite_mode_link_without_a_registered_output_stays_a_plain_id() {
+        let mut links = std::collections::HashMap::new();
+        links.insert("other".to_string(), "other.md".to_string());
+        let md = compose_with(
+            CITE_DOC,
+            &ComposeOptions {
+                cites: CiteMode::Link,
+                number_headings: false,
+                cite_links: Some(std::rc::Rc::new(links)),
+            },
+        );
         assert!(md.contains("**Cites:** r1"), "{}", md);
     }
 
     #[test]
     fn cite_mode_short_renders_target_headings() {
-        let md = compose_with(CITE_DOC, &ComposeOptions { cites: CiteMode::Short, number_headings: false });
+        let md = compose_with(CITE_DOC, &ComposeOptions { cites: CiteMode::Short, number_headings: false, cite_links: None });
         assert!(
             md.contains("**Cites:** HR. Muslim no. 2653 (Kitab al-Qadar)"),
             "{}",
@@ -655,7 +1022,7 @@ entity "Doc" "doc" {
 
     #[test]
     fn cite_lines_render_between_label_and_body() {
-        let md = compose_with(CITE_DOC, &ComposeOptions { cites: CiteMode::Link, number_headings: false });
+        let md = compose_with(CITE_DOC, &ComposeOptions { cites: CiteMode::Link, number_headings: false, cite_links: None });
         let label_pos = md.find("**REVELATION**").unwrap();
         let cite_pos = md.find("**Cites:**").unwrap();
         let body_pos = md.find("kutipan ayat").unwrap();

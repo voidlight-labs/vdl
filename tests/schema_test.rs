@@ -300,3 +300,76 @@ entity "Naskah" "utama" {
     assert!(md.contains("\"label\": \"Naskah — “Kutip” ✓\""), "{}", md);
     assert!(md.contains("## Bab Satu — “Pembuka”"), "{}", md);
 }
+
+// ---------------------------------------------------------------------------
+// V17: enum-restricted text fields
+// ---------------------------------------------------------------------------
+
+#[test]
+fn enum_restricted_text_field_accepts_listed_values() {
+    let src = r#"
+schema "lint" {
+    type "Entry" {
+        field "label" text heading
+        field "status" text in ["draft", "verified"] optional
+    }
+}
+
+entity "Entry" "first" {
+    field "label" "First"
+    field "status" "verified"
+}
+
+entity "Entry" "second" {
+    field "label" "Second"
+}
+"#;
+    let doc = parse(src, Path::new("lint.vdl"));
+    assert!(diag(&doc).is_empty(), "{:?}", diag(&doc));
+}
+
+#[test]
+fn enum_restricted_text_field_rejects_unlisted_values() {
+    let src = r#"
+schema "lint" {
+    type "Entry" {
+        field "label" text heading
+        field "status" text in ["draft", "verified"] optional
+    }
+}
+
+entity "Entry" "first" {
+    field "label" "First"
+    field "status" "published"
+}
+"#;
+    let doc = parse(src, Path::new("lint.vdl"));
+    let messages = diag(&doc);
+    assert_eq!(messages.len(), 1, "{:?}", messages);
+    assert!(
+        messages[0].contains("allowed values are [draft, verified]"),
+        "{:?}",
+        messages
+    );
+}
+
+#[test]
+fn enum_restriction_on_a_non_text_field_is_rejected() {
+    let src = r#"
+schema "lint" {
+    type "Entry" {
+        field "label" text heading
+        field "content" body in ["a"]
+    }
+}
+
+entity "Entry" "first" {
+    field "label" "First"
+    field "content" """a"""
+}
+"#;
+    let doc = parse(src, Path::new("lint.vdl"));
+    let messages = diag(&doc);
+    assert_eq!(messages.len(), 1, "{:?}", messages);
+    assert!(messages[0].contains("only text fields can be restricted"), "{:?}", messages);
+}

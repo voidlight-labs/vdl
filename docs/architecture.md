@@ -26,7 +26,7 @@ source locations. It requires exactly one schema per project.
 
 ## Stage 3: Validator (`src/validator/`)
 
-`schema.rs` implements rules V1-V16 for author-defined models, including
+`schema.rs` implements rules V1-V17 for author-defined models, including
 type/field/ID integrity, references and composition targets, heading and body
 requirements, and modifier placement. See [validation.md](validation.md).
 

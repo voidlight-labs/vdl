@@ -1,6 +1,6 @@
 [
   "package" "import" "as" "schema" "type" "field" "entity" "label"
-  "text" "body" "ref" "heading" "compose" "inline" "optional" "evidence"
+  "text" "body" "ref" "in" "heading" "compose" "inline" "optional" "evidence"
 ] @keyword
 
 (package_declaration namespace: (name) @type)

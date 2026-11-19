@@ -1,8 +1,8 @@
 # CLI Usage
 
-`validate`, `compose`, `graph`, and `search` accept a single `.vdl` file or a
-directory scanned recursively. `compile` accepts a project directory with
-`vdl.toml`.
+`validate`, `compose`, `graph`, `search`, and `stats` accept a single `.vdl`
+file or a directory scanned recursively. `compile` accepts a project
+directory with `vdl.toml`.
 
 ## `vdl validate <file_or_dir>`
 
@@ -95,4 +95,38 @@ still exits successfully.
 
 ```bash
 vdl search deploy path/to/project/
+```
+
+## `vdl rename <old-id> <new-id> <file_or_dir> [--write]`
+
+Rename an entity ID across a project's sources: the entity's declaration,
+every reference to it (quoted, dotted, or bare), and exact
+`include <id>` directives in braced bodies. Quoted and dotted references are
+rewritten to the quoted new ID; bare references keep their bare spelling with
+the new ID's final segment, and a rewrite is refused when that spelling would
+resolve to something else. Include directives written as bare short names are
+reported as warnings for manual follow-up.
+
+Without `--write` the command prints a dry run (per-file edit counts) and
+writes nothing. The rewritten project is validated in memory before any file
+is touched, and revalidated after writing.
+
+```bash
+vdl rename soul.alignment.foundation soul.alignment.core path/to/project/
+vdl rename old.id new.id path/to/project/ --write
+```
+
+## `vdl stats <file_or_dir> [--json]`
+
+Report field population and reference health. For every declared type: the
+entity count and, per field, how many entities supply it (`supplied/total`)
+with its kind and required/optional marker, so gaps on optional fields stand
+out. The report also lists entities no reference field points at, in
+declaration order; roots that reference others but are never referenced
+themselves appear here by design, next to forgotten ones. `--json` emits the
+same report as a JSON object.
+
+```bash
+vdl stats path/to/project/
+vdl stats path/to/project/ --json
 ```

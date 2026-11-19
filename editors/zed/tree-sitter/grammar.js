@@ -26,6 +26,7 @@ module.exports = grammar({
 
     field_declaration: $ => seq(
       "field", field("name", $.string), $.field_kind,
+      optional(seq("in", "[", commaList(field("allowed", $.string)), "]")),
       repeat(choice("heading", "compose", "inline", "optional")),
       optional(seq("[", commaList(field("target", $.string)), "]")),
       repeat(choice("heading", "compose", "inline", "optional")),

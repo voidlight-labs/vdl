@@ -312,15 +312,29 @@ pub fn parse_schema_fragment(
         just(Token::Optional).to(Modifier::Optional),
     ));
 
+    // `text in ["a", "b"]`: a contextual keyword, so no document loses a
+    // bare field named `in`.
+    let enum_values = just(Token::Identifier("in".to_owned()))
+        .ignore_then(
+            string
+                .clone()
+                .separated_by(just(Token::Comma))
+                .at_least(1)
+                .allow_trailing()
+                .delimited_by(just(Token::LBracket), just(Token::RBracket)),
+        )
+        .or_not();
+
     let field_decl = just(Token::Field)
         .ignore_then(string.clone())
         .then(field_kind)
+        .then(enum_values)
         .then(modifier.clone().repeated().collect::<Vec<_>>())
         .then(string.clone().separated_by(just(Token::Comma)).at_least(1).allow_trailing().delimited_by(just(Token::LBracket), just(Token::RBracket)).or_not())
         .then(modifier.repeated().collect::<Vec<_>>())
         .map_with_span({
             let file = file.clone();
-            move |((((name, kind), mut modifiers), compose_targets), trailing_modifiers), span: Span| {
+            move |(((((name, kind), allowed_values), mut modifiers), compose_targets), trailing_modifiers), span: Span| {
                 modifiers.extend(trailing_modifiers);
                 let mut heading = false;
                 let mut compose = false;
@@ -345,6 +359,7 @@ pub fn parse_schema_fragment(
                     cite,
                     optional,
                     compose_targets: compose_targets.unwrap_or_default(),
+                    allowed_values: allowed_values.unwrap_or_default(),
                     source_location: span_to_location(span, source, &file),
                 }
             }
@@ -392,50 +407,59 @@ pub fn parse_schema_fragment(
 
     // -- Instances ----------------------------------------------------------
 
-    let id = string.clone().or(filter_map(move |span, token: Token| {
-        let name = qualified_name(&token)
-            .ok_or_else(|| Simple::custom(span, "expected an entity name or quoted ID"))?;
-        Ok(match package {
-            Some(package) if !name.contains('.') => format!("{}.{}", package, name),
-            _ => name.to_owned(),
-        })
-    }));
+    let id = string
+        .clone()
+        .map_with_span(|name, span| (name, span))
+        .or(filter_map(move |span, token: Token| {
+            let name = qualified_name(&token)
+                .ok_or_else(|| Simple::custom(span, "expected an entity name or quoted ID"))?;
+            Ok(match package {
+                Some(package) if !name.contains('.') => format!("{}.{}", package, name),
+                _ => name.to_owned(),
+            })
+            .map(|name| (name, span))
+        }));
 
-    let ref_id = string.clone().map(|name| (name, false)).or(filter_map(move |span, token: Token| {
-        let name = qualified_name(&token)
-            .ok_or_else(|| Simple::custom(span, "expected an entity name or quoted ID"))?;
-        Ok((name.to_owned(), !name.contains('.')))
-    }));
+    let ref_id = string
+        .clone()
+        .map_with_span(|name, span| (name, false, span))
+        .or(filter_map(move |span, token: Token| {
+            let name = qualified_name(&token)
+                .ok_or_else(|| Simple::custom(span, "expected an entity name or quoted ID"))?;
+            Ok((name.to_owned(), !name.contains('.'), span))
+        }));
 
     let value = choice((
-        braced_string.clone().map(|raw| (Value::BracedBody(dedent(&raw)), Vec::new())),
-        raw_string.clone().map(|raw| (Value::Body(dedent(&raw)), Vec::new())),
+        braced_string.clone().map(|raw| (Value::BracedBody(dedent(&raw)), Vec::new(), Vec::new())),
+        raw_string.clone().map(|raw| (Value::Body(dedent(&raw)), Vec::new(), Vec::new())),
         just(Token::Prose)
             .ignore_then(raw_string.clone().or(braced_string.clone()))
-            .map(|raw| (InlineItem::Prose(dedent(&raw)), false))
-            .or(ref_id.map(|(id, bare)| (InlineItem::Ref(id), bare)))
+            .map_with_span(|raw, span| (InlineItem::Prose(dedent(&raw)), false, Some(span)))
+            .or(ref_id.map(|(id, bare, span)| (InlineItem::Ref(id), bare, Some(span))))
             .separated_by(just(Token::Comma))
             .allow_trailing()
             .collect::<Vec<_>>()
             .delimited_by(just(Token::LBracket), just(Token::RBracket))
             .map(|items| {
                 let mut bare_refs = Vec::new();
+                let mut ref_spans = Vec::new();
                 let mut ref_index = 0;
-                for (item, bare) in &items {
+                for (item, bare, span) in &items {
                     if matches!(item, InlineItem::Ref(_)) {
                         if *bare { bare_refs.push(ref_index); }
+                        if let Some(span) = span { ref_spans.push(*span); }
                         ref_index += 1;
                     }
                 }
-                if items.iter().any(|(item, _)| matches!(item, InlineItem::Prose(_))) {
-                    (Value::Inline(items.into_iter().map(|(item, _)| item).collect()), bare_refs)
+                if items.iter().any(|(item, _, _)| matches!(item, InlineItem::Prose(_))) {
+                    (Value::Inline(items.into_iter().map(|(item, _, _)| item).collect()), bare_refs, ref_spans)
                 } else {
-                    (Value::Refs(items.into_iter().filter_map(|(item, _)| match item {
+                    (Value::Refs(items.into_iter().filter_map(|(item, _, _)| match item {
                         InlineItem::Ref(id) => Some(id), InlineItem::Prose(_) => None,
-                    }).collect()), bare_refs)
+                    }).collect()), bare_refs, ref_spans)
                 }
             }),
-        string.clone().map(|text| (Value::Text(text), Vec::new())),
+        string.clone().map(|text| (Value::Text(text), Vec::new(), Vec::new())),
     ));
 
     let bare_name = filter_map(|span, token: Token| {
@@ -454,10 +478,11 @@ pub fn parse_schema_fragment(
         .or(bare_name.clone().then(value))
         .map_with_span({
             let file = file.clone();
-            move |(name, (value, bare_ref_indices)), span: Span| FieldValue {
+            move |(name, (value, bare_ref_indices, ref_spans)), span: Span| FieldValue {
                 name,
                 value,
                 bare_ref_indices,
+                ref_spans,
                 source_location: span_to_location(span, source, &file),
             }
         });
@@ -477,9 +502,10 @@ pub fn parse_schema_fragment(
         )
         .map_with_span({
             let file = file.clone();
-            move |((type_name, id), values), span: Span| Instance {
+            move |((type_name, (id, id_span)), values), span: Span| Instance {
                 type_name,
                 id,
+                id_span,
                 values,
                 source_location: span_to_location(span, source, &file),
                 package: package.map(str::to_owned),

@@ -28,7 +28,7 @@ their own entity types and fields in a `schema` block, and the compiler
 learns the model from the source (no type/field names in Rust — the guard
 test is `tests/schema_test.rs::renaming_types_needs_no_rust_change`).
 
-**Pipeline:** Lexer → Parser → Validator (schema rules V1–V16) → Code
+**Pipeline:** Lexer → Parser → Validator (schema rules V1–V17) → Code
 Generator (`compose.rs`) → Graph & search (`graph/`). The legacy fixed-type
 pipeline (graph builder, JSON/DOT/search/legacy-Markdown codegen,
 `graph`/`diff`/`search` commands) was removed on 2026-11-16; `graph` and
@@ -41,9 +41,11 @@ src/
 ├── parser/         # chumsky 0.9 combinators → SchemaDoc or SchemaFragment
 ├── model/          # SchemaDoc: user-declared types, fields, instances
 ├── project/        # Recursive discovery, vdl.toml manifest, guarded Markdown build
-├── validator/      # 16 schema rules → VdlResult<()>
+├── validator/      # 17 schema rules → VdlResult<()>
 ├── codegen/        # compose.rs: schema model → composed Markdown
 ├── graph/          # Graph build over the schema model; JSON/DOT/search-index renderers
+├── stats.rs        # Field-population and reference-health report
+├── rename.rs       # Entity ID rewrite across sources (span-based, validated)
 ├── fsutil.rs       # File identity: canonical anchors, device/inode, Windows file ID
 ├── cli/            # clap 4.5 commands + miette error reporting
 ├── error.rs        # VdlError enum with source locations
@@ -106,7 +108,8 @@ Read this before changing the parser, validator, or renderer.
   unit test named `v<N>_*`, and add the row to `docs/validation.md`.
 
 ### CLI (`src/cli/`)
-- Commands: `validate`, `compile`, `compose`, `graph`, `search`.
+- Commands: `validate`, `compile`, `compose`, `graph`, `search`, `stats`,
+  `rename`.
 - `validate`, `compose`, `graph`, and `search` accept a project directory
   without a manifest.
 - `graph` emits `--format json|dot|index` with an optional `--root` one-hop

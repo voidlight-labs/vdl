@@ -35,6 +35,8 @@ pub mod lexer;
 pub mod model;
 pub mod parser;
 pub mod project;
+pub mod rename;
+pub mod stats;
 pub mod validator;
 
 mod fsutil;

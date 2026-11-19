@@ -95,6 +95,10 @@ pub fn run() -> Result<()> {
             cmd_graph(&path, format, root.as_deref(), out.as_deref())
         }
         commands::Commands::Search { query, path } => cmd_search(&query, &path),
+        commands::Commands::Stats { path, json } => cmd_stats(&path, json),
+        commands::Commands::Rename { old, new, path, write } => {
+            cmd_rename(&old, &new, &path, write)
+        }
     }
 }
 
@@ -138,6 +142,7 @@ fn cmd_compose(path: &str, root: &str, out: Option<&Path>, cites: Option<&str>) 
             }
         },
         number_headings: false,
+        cite_links: None,
     };
     let markdown = wrap(crate::codegen::compose::compose_with_options(&project.doc, root, &options))?;
 
@@ -297,5 +302,57 @@ fn cmd_search(query: &str, path: &str) -> Result<()> {
     if !matched {
         println!("No entities matching '{}'.", query);
     }
+    Ok(())
+}
+
+/// Report field population and reference health for a project.
+fn cmd_stats(path: &str, json: bool) -> Result<()> {
+    let project = wrap(project::load_schema_project(Path::new(path)))?;
+    let report = crate::stats::build_report(&project.doc);
+    if json {
+        print!("{}", crate::stats::to_json(&report));
+    } else {
+        print!("{}", crate::stats::to_text(&report));
+    }
+    Ok(())
+}
+
+/// Rename an entity ID across a project's sources.
+///
+/// Without `--write` the command prints the planned edits; with it, the
+/// files are rewritten and the project is reloaded and revalidated as the
+/// final confirmation.
+fn cmd_rename(old: &str, new: &str, path: &str, write: bool) -> Result<()> {
+    let project = wrap(project::load_schema_project(Path::new(path)))?;
+    let plan = wrap(crate::rename::plan(&project, old, new))?;
+
+    for (file, count) in plan.per_file() {
+        println!("  {} edit(s) in {}", count, file.display());
+    }
+    if plan.total() == 0 {
+        println!("No occurrences of \"{}\" outside its declaration.", plan.old);
+    }
+    for warning in &plan.warnings {
+        println!("warning: {warning}");
+    }
+    if !write {
+        println!(
+            "Dry run: {} edit(s) would rename \"{}\" to \"{}\". Re-run with --write to apply.",
+            plan.total(),
+            plan.old,
+            plan.new
+        );
+        return Ok(());
+    }
+
+    plan.apply().map_err(|e| miette!("{}", e))?;
+    let reloaded = wrap(project::load_schema_project(Path::new(path)))?;
+    if reloaded.doc.instance(new).is_none() {
+        return Err(miette!(
+            "rename applied but \"{}\" is missing after reload; check the rewritten files",
+            new
+        ));
+    }
+    println!("✓ Renamed \"{}\" → \"{}\" across {} file(s).", plan.old, plan.new, plan.per_file().len());
     Ok(())
 }

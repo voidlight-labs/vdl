@@ -35,6 +35,10 @@ output = "runbooks/recovery.md"
 # Optional per-target cite rendering mode: "none" (default), "link", "short"
 cites = "short"
 
+# Optional: render cites that point at other registered Markdown targets as
+# relative Markdown links (in "link" cite mode)
+cite_links = true
+
 # Optional per-target heading numbering
 number_headings = true
 
@@ -50,6 +54,11 @@ output = "graph.dot"
 [[build.graph]]
 format = "index"
 output = "search.json"
+
+[[build.toc]]
+root = "deploy"
+output = "toc.md"
+number_headings = true
 ```
 
 `root` is an entity ID. `out_dir` is relative to the project root, and each
@@ -65,6 +74,12 @@ for the same project byte for byte, and its destination passes the same
 safety checks as Markdown targets: it must stay inside `out_dir`, must not
 resolve to a `.vdl` path, and must not alias a source, the manifest, or
 another target. Nothing is written until every target has been planned.
+
+`[[build.toc]]` entries are optional table-of-contents artifacts: one root
+entity each, rendered as the composed heading tree (indented bullets, no
+bodies). `number_headings = true` prefixes entries with their composed
+position, matching the Markdown targets' numbering. They pass the same
+destination checks as every other target kind.
 
 Diagnostics across the project:
 

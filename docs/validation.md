@@ -23,6 +23,7 @@ declaration or reference. All violations are collected, not short-circuited.
 | V14 | the same field supplied twice in one instance |
 | V15 | more than one `body` field in a type, even with no instances |
 | V16 | `cite` on a non-`ref` field |
+| V17 | text value outside the field's declared `in [...]` list, or a value restriction on a non-`text` field |
 
 Implementation: `src/validator/schema.rs`.
 

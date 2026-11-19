@@ -88,9 +88,26 @@ after the entity's label and before its body:
 - `none` — the default — leaves output byte-identical to the pre-cite
   behavior.
 
+With `cite_links = true` on a `[[build.markdown]]` entry, a `link`-mode cite
+whose target is itself a registered Markdown target renders as a relative
+Markdown link to that output (e.g. `**Cites:** [some.id](../other/id.md)`).
+Targets without their own output keep the plain ID, and `short` mode is
+unaffected. Only composed entities render the cite line; the root's cite
+fields live in frontmatter as before.
+
 Inline entities also render their populated text fields as
 `**field:** value` metadata lines between label and body (the root entity
 keeps text fields in frontmatter instead).
+
+## Table of contents (`[[build.toc]]`)
+
+Builds can render a composed document's heading tree without bodies: one
+indented bullet per composed entity, plus the targets of braced-body
+`include` directives (inline fields contribute nothing, since inline
+entities render without headings). `number_headings = true` prefixes each
+entry with its composed position, using the same numbering as the Markdown
+targets. Root lookup, destination safety, and cycle errors match the
+Markdown targets.
 
 ## Build safety
 

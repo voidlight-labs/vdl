@@ -1697,3 +1697,180 @@ output = "graph.svg"
         err
     );
 }
+
+// ---------------------------------------------------------------------------
+// Cross-file cite links ([[build.markdown]] cite_links)
+// ---------------------------------------------------------------------------
+
+const CITE_LINK_FILES: &[(&str, &str)] = &[
+    (
+        "model.vdl",
+        r#"
+schema "net" {
+    type "Doc" {
+        field "label" text heading
+        field "hubs" ref "Hub" compose
+    }
+    type "Hub" {
+        field "label" text heading
+        field "refs" ref "Leaf" cite
+    }
+    type "Leaf" {
+        field "label" text heading
+        field "content" body
+    }
+}
+"#,
+    ),
+    (
+        "net.vdl",
+        r#"
+entity "Leaf" "net.leaf.alpha" {
+    field "label" "Alpha"
+    field "content" """Leaf body."""
+}
+
+entity "Hub" "net.hub" {
+    field "label" "Hub"
+    field "refs" [ "net.leaf.alpha" ]
+}
+
+entity "Doc" "net.doc" {
+    field "label" "Net"
+    field "hubs" [ "net.hub" ]
+}
+"#,
+    ),
+    (
+        "vdl.toml",
+        r#"[build]
+out_dir = "dist"
+
+[[build.markdown]]
+root = "net.doc"
+output = "doc.md"
+cites = "link"
+cite_links = true
+
+[[build.markdown]]
+root = "net.leaf.alpha"
+output = "leaf/alpha.md"
+"#,
+    ),
+];
+
+#[test]
+fn compile_renders_cites_as_relative_links_between_outputs() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let root = temp.path();
+    write_files(root, CITE_LINK_FILES);
+
+    let output = run_vdl(["compile", root.to_str().unwrap()]);
+    assert!(output.status.success(), "{}", stderr(&output));
+
+    let doc_md = fs::read_to_string(root.join("dist/doc.md")).expect("doc written");
+    assert!(
+        doc_md.contains("**Cites:** [net.leaf.alpha](leaf/alpha.md)"),
+        "doc: {}",
+        doc_md
+    );
+}
+
+#[test]
+fn cite_links_absent_keeps_plain_ids() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let root = temp.path();
+    write_files(root, CITE_LINK_FILES);
+    write_files(
+        root,
+        &[(
+            "vdl.toml",
+            r#"[build]
+out_dir = "dist"
+
+[[build.markdown]]
+root = "net.doc"
+output = "doc.md"
+cites = "link"
+
+[[build.markdown]]
+root = "net.leaf.alpha"
+output = "leaf/alpha.md"
+"#,
+        )],
+    );
+
+    let output = run_vdl(["compile", root.to_str().unwrap()]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    let doc_md = fs::read_to_string(root.join("dist/doc.md")).expect("doc written");
+    assert!(doc_md.contains("**Cites:** net.leaf.alpha"), "doc: {}", doc_md);
+    assert!(!doc_md.contains("leaf/alpha.md"), "doc: {}", doc_md);
+}
+
+// ---------------------------------------------------------------------------
+// TOC build targets ([[build.toc]])
+// ---------------------------------------------------------------------------
+
+#[test]
+fn compile_writes_a_toc_target_from_the_composed_tree() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let root = temp.path();
+    write_files(root, GRAPH_PROJECT_FILES);
+    write_files(
+        root,
+        &[(
+            "vdl.toml",
+            r#"[build]
+out_dir = "dist"
+
+[[build.markdown]]
+root = "guide"
+output = "guide.md"
+
+[[build.toc]]
+root = "guide"
+output = "nested/toc.md"
+number_headings = true
+"#,
+        )],
+    );
+
+    let output = run_vdl(["compile", root.to_str().unwrap()]);
+    assert!(output.status.success(), "{}", stderr(&output));
+
+    let toc = fs::read_to_string(root.join("dist/nested/toc.md")).expect("toc written");
+    assert!(toc.contains("- Guide"), "{toc}");
+    // The guide composes its single section with a position number.
+    assert!(toc.contains("  - 1. Intro"), "{toc}");
+    // TOC carries headings only; no body prose leaks in.
+    assert!(!toc.contains("Intro body"), "{toc}");
+}
+
+#[test]
+fn toc_target_colliding_with_markdown_output_is_rejected() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let root = temp.path();
+    write_files(root, GRAPH_PROJECT_FILES);
+    write_files(
+        root,
+        &[(
+            "vdl.toml",
+            r#"[build]
+out_dir = "dist"
+
+[[build.markdown]]
+root = "guide"
+output = "guide.md"
+
+[[build.toc]]
+root = "guide"
+output = "guide.md"
+"#,
+        )],
+    );
+
+    let output = run_vdl(["compile", root.to_str().unwrap()]);
+    let err = stderr(&output);
+    assert!(!output.status.success(), "{}", err);
+    assert!(err.contains("collides"), "stderr: {}", err);
+}

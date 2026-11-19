@@ -10,6 +10,7 @@
 //! [`crate::codegen::compose`].
 
 use crate::error::SourceLocation;
+use crate::lexer::Span;
 
 /// One parsed schema document: exactly one schema block plus its instances.
 ///
@@ -110,6 +111,8 @@ pub struct FieldDecl {
     pub optional: bool,
     /// Allowed entity types for `body compose ["..."]` include directives.
     pub compose_targets: Vec<String>,
+    /// The `text in ["a", "b"]` value restriction; empty when unrestricted.
+    pub allowed_values: Vec<String>,
     pub source_location: SourceLocation,
 }
 
@@ -152,6 +155,8 @@ impl std::fmt::Display for FieldKind {
 pub struct Instance {
     pub type_name: String,
     pub id: String,
+    /// Byte span of the ID as written in the source (quoted or bare).
+    pub id_span: Span,
     pub values: Vec<FieldValue>,
     pub source_location: SourceLocation,
     pub package: Option<String>,
@@ -191,6 +196,9 @@ pub struct FieldValue {
     pub value: Value,
     /// Zero-based positions of bare IDs in the flattened reference sequence.
     pub bare_ref_indices: Vec<usize>,
+    /// Byte spans of each ID in the flattened reference sequence, aligned
+    /// with `bare_ref_indices` positions. Empty for non-reference values.
+    pub ref_spans: Vec<Span>,
     pub source_location: SourceLocation,
 }
 

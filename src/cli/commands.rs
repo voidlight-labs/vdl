@@ -90,4 +90,35 @@ pub enum Commands {
         /// Path to one .vdl schema document or a project directory.
         path: String,
     },
+
+    /// Report field population and reference health.
+    ///
+    /// For every declared type: how many entities exist and how many supply
+    /// each field (gaps only appear on optional fields). Also lists entities
+    /// no reference field points at.
+    Stats {
+        /// Path to one .vdl schema document or a project directory.
+        path: String,
+        /// Emit JSON instead of a text table.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Rename an entity ID across a project's sources.
+    ///
+    /// Rewrites the entity's declaration, every reference to it, and exact
+    /// `include <id>` directives. Without `--write` the command only prints
+    /// the planned edits; the rewritten project is validated in memory and
+    /// nothing is written unless it still validates.
+    Rename {
+        /// Existing entity ID to replace.
+        old: String,
+        /// New entity ID (must not exist yet).
+        new: String,
+        /// Path to one .vdl schema document or a project directory.
+        path: String,
+        /// Apply the rewrite. Without this flag the command only previews.
+        #[arg(long)]
+        write: bool,
+    },
 }
