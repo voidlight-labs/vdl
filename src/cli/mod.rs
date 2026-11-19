@@ -50,6 +50,7 @@ fn report_vdl_error(err: VdlError) -> miette::Report {
             miette!("Validation failed with {} error(s):\n{}", count, messages)
         }
         VdlError::Codegen { message } => miette!("Codegen error: {}", message),
+        VdlError::Graph { message } => miette!("Graph error: {}", message),
         VdlError::Io { message } => miette!("IO error: {}", message),
         VdlError::Other { message } => miette!("{}", message),
     }
@@ -90,6 +91,10 @@ pub fn run() -> Result<()> {
         commands::Commands::Compose { path, root, out, cites } => {
             cmd_compose(&path, &root, out.as_deref(), cites.as_deref())
         }
+        commands::Commands::Graph { path, format, root, out } => {
+            cmd_graph(&path, format, root.as_deref(), out.as_deref())
+        }
+        commands::Commands::Search { query, path } => cmd_search(&query, &path),
     }
 }
 
@@ -138,58 +143,64 @@ fn cmd_compose(path: &str, root: &str, out: Option<&Path>, cites: Option<&str>) 
 
     match out {
         Some(out_path) => {
-            let write_error = |e| miette!("Failed to write {}: {}", out_path.display(), e);
-            // Compare the open files before truncating, so a path change after
-            // the check cannot redirect the write to the input.
-            let mut options = fs::OpenOptions::new();
-            options.write(true).create(true).truncate(false);
-            #[cfg(windows)]
-            {
-                use std::os::windows::fs::OpenOptionsExt;
-                use windows_sys::Win32::Storage::FileSystem::{
-                    FILE_GENERIC_WRITE, FILE_READ_ATTRIBUTES,
-                };
-
-                options.access_mode(FILE_GENERIC_WRITE | FILE_READ_ATTRIBUTES);
-            }
-            let mut output = options.open(out_path).map_err(write_error)?;
-
-            for protected in project.protected_files() {
-                #[cfg(any(unix, windows))]
-                let aliases =
-                    fs::File::open(protected).and_then(|input| same_file(&output, &input));
-                #[cfg(not(any(unix, windows)))]
-                let aliases = crate::fsutil::paths_alias(out_path, protected);
-
-                let aliases = aliases.map_err(|e| {
-                    miette!(
-                        "Failed to compare output path {} with project source '{}': {}",
-                        out_path.display(),
-                        protected.display(),
-                        e
-                    )
-                })?;
-                if aliases {
-                    if project.manifest_path.as_deref() == Some(protected) {
-                        return Err(miette!(
-                            "refusing to write output over the build manifest '{}'",
-                            protected.display()
-                        ));
-                    }
-                    return Err(miette!(
-                        "refusing to write output over the input file '{}'",
-                        protected.display()
-                    ));
-                }
-            }
-
-            output.set_len(0).map_err(write_error)?;
-            output.write_all(markdown.as_bytes()).map_err(write_error)?;
+            write_protected(&project, out_path, &markdown)?;
             println!("✓ Composed '{}' → {}", root, out_path.display());
         }
         None => print!("{}", markdown),
     }
 
+    Ok(())
+}
+
+/// Write `contents` to `out_path`, refusing to truncate any project source or
+/// the manifest.
+///
+/// The output is opened without truncation and compared with every protected
+/// file before anything is written, so a path change after the check cannot
+/// redirect the write to the input.
+fn write_protected(project: &project::SchemaProject, out_path: &Path, contents: &str) -> Result<()> {
+    let write_error = |e| miette!("Failed to write {}: {}", out_path.display(), e);
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create(true).truncate(false);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        use windows_sys::Win32::Storage::FileSystem::{FILE_GENERIC_WRITE, FILE_READ_ATTRIBUTES};
+
+        options.access_mode(FILE_GENERIC_WRITE | FILE_READ_ATTRIBUTES);
+    }
+    let mut output = options.open(out_path).map_err(write_error)?;
+
+    for protected in project.protected_files() {
+        #[cfg(any(unix, windows))]
+        let aliases = fs::File::open(protected).and_then(|input| same_file(&output, &input));
+        #[cfg(not(any(unix, windows)))]
+        let aliases = crate::fsutil::paths_alias(out_path, protected);
+
+        let aliases = aliases.map_err(|e| {
+            miette!(
+                "Failed to compare output path {} with project source '{}': {}",
+                out_path.display(),
+                protected.display(),
+                e
+            )
+        })?;
+        if aliases {
+            if project.manifest_path.as_deref() == Some(protected) {
+                return Err(miette!(
+                    "refusing to write output over the build manifest '{}'",
+                    protected.display()
+                ));
+            }
+            return Err(miette!(
+                "refusing to write output over the input file '{}'",
+                protected.display()
+            ));
+        }
+    }
+
+    output.set_len(0).map_err(write_error)?;
+    output.write_all(contents.as_bytes()).map_err(write_error)?;
     Ok(())
 }
 
@@ -217,5 +228,74 @@ fn cmd_compile(path: &str) -> Result<()> {
         println!("  → {}", output.display());
     }
     println!("✓ Compilation complete.");
+    Ok(())
+}
+
+/// Emit the project graph as JSON, DOT, or a search index.
+///
+/// The input is loaded exactly like `validate`; `--root` narrows the output
+/// to one entity and its one-hop neighborhood before rendering.
+fn cmd_graph(
+    path: &str,
+    format: commands::GraphFormat,
+    root: Option<&str>,
+    out: Option<&Path>,
+) -> Result<()> {
+    use commands::GraphFormat;
+    use std::collections::HashSet;
+
+    let project = wrap(project::load_schema_project(Path::new(path)))?;
+    let graph = crate::graph::Graph::build(&project.doc);
+    let graph = match root {
+        Some(root) => wrap(graph.one_hop(root))?,
+        None => graph,
+    };
+
+    let output = match format {
+        GraphFormat::Json => crate::graph::json::to_json(&graph),
+        GraphFormat::Dot => crate::graph::dot::to_dot(&graph),
+        GraphFormat::Index => {
+            let documents = crate::graph::search::build_index(&project.doc);
+            let kept: HashSet<&str> = graph.nodes.iter().map(|n| n.id.as_str()).collect();
+            let kept: Vec<_> = documents
+                .iter()
+                .filter(|d| kept.contains(d.id.as_str()))
+                .cloned()
+                .collect();
+            crate::graph::search::to_json(&kept)
+        }
+    };
+
+    match out {
+        Some(out_path) => {
+            write_protected(&project, out_path, &output)?;
+            println!("✓ Graph written to {}", out_path.display());
+        }
+        None => print!("{}", output),
+    }
+
+    Ok(())
+}
+
+/// Search entity content for a case-insensitive substring.
+fn cmd_search(query: &str, path: &str) -> Result<()> {
+    let project = wrap(project::load_schema_project(Path::new(path)))?;
+    let documents = crate::graph::search::build_index(&project.doc);
+
+    let mut matched = false;
+    for document in &documents {
+        if crate::graph::search::matches(document, query) {
+            matched = true;
+            println!(
+                "{} | {} | {}",
+                document.id,
+                document.type_name,
+                document.label.as_deref().unwrap_or("-")
+            );
+        }
+    }
+    if !matched {
+        println!("No entities matching '{}'.", query);
+    }
     Ok(())
 }

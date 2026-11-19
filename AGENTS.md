@@ -1,7 +1,7 @@
 # Agent Documentation: VDL Compiler
 
 > **For agents working on this codebase.**
-> Last updated: 2026-11-16
+> Last updated: 2026-11-20
 
 ## Quick Commands
 
@@ -29,10 +29,11 @@ learns the model from the source (no type/field names in Rust — the guard
 test is `tests/schema_test.rs::renaming_types_needs_no_rust_change`).
 
 **Pipeline:** Lexer → Parser → Validator (schema rules V1–V16) → Code
-Generator (`compose.rs`). The legacy fixed-type pipeline (graph builder,
-JSON/DOT/search/legacy-Markdown codegen, `graph`/`diff`/`search` commands)
-was removed on 2026-11-16; see `docs/ROADMAP.md` for the planned schema-form
-re-implementation.
+Generator (`compose.rs`) → Graph & search (`graph/`). The legacy fixed-type
+pipeline (graph builder, JSON/DOT/search/legacy-Markdown codegen,
+`graph`/`diff`/`search` commands) was removed on 2026-11-16; `graph` and
+`search` were re-implemented over the schema model on 2026-11-20 and `diff`
+remains dropped.
 
 ```
 src/
@@ -42,6 +43,7 @@ src/
 ├── project/        # Recursive discovery, vdl.toml manifest, guarded Markdown build
 ├── validator/      # 16 schema rules → VdlResult<()>
 ├── codegen/        # compose.rs: schema model → composed Markdown
+├── graph/          # Graph build over the schema model; JSON/DOT/search-index renderers
 ├── fsutil.rs       # File identity: canonical anchors, device/inode, Windows file ID
 ├── cli/            # clap 4.5 commands + miette error reporting
 ├── error.rs        # VdlError enum with source locations
@@ -104,8 +106,12 @@ Read this before changing the parser, validator, or renderer.
   unit test named `v<N>_*`, and add the row to `docs/validation.md`.
 
 ### CLI (`src/cli/`)
-- Commands: `validate`, `compile`, `compose`. All accept file or directory.
-- `validate` and `compose` accept a project directory without a manifest.
+- Commands: `validate`, `compile`, `compose`, `graph`, `search`.
+- `validate`, `compose`, `graph`, and `search` accept a project directory
+  without a manifest.
+- `graph` emits `--format json|dot|index` with an optional `--root` one-hop
+  filter; `search` runs a case-insensitive substring query over entity content.
+  Both reuse the guarded `--out` write from `compose`.
 - `compile` requires `vdl.toml` (reports a manifest example when missing).
   Legacy documents are rejected with a clear message — the legacy pipeline
   was removed 2026-11-16.
@@ -131,10 +137,12 @@ changing discovery, manifests, or output writing.
 ## Testing
 
 - `cli_test.rs` — spawns binary via `cargo run` for end-to-end validation
-- `snapshot_test.rs` — `insta` snapshot of compose output
+- `snapshot_test.rs` — hand-written equality of compose output
 - `schema_test.rs` — schema acceptance, negative cases, CRLF fidelity, and
   the rename check (no domain vocabulary in `src/`)
 - `project_test.rs` — multi-file loading, manifest targets, build guards
+- `graph_test.rs` — graph/index/search over multi-file projects, one-hop
+  filtering, determinism, and `--out` guards
 
 Known environment quirk: some `project_test` diagnostics-assertion tests can
 fail on narrow terminals due to `miette` stderr line-wrapping — pre-existing,
@@ -154,8 +162,9 @@ parse the fixtures and representative project sources. See
 - **One schema block per project (or per single file).**
 - **No inheritance, executable methods, plugin validators, or external
   content resolvers.**
-- **Schema projects produce Markdown only.** Graph/DOT/search outputs are a
-  planned re-implementation over the schema model — see `docs/ROADMAP.md`.
+- **Graph/index outputs are CLI-only.** `vdl.toml` registers Markdown targets
+  only; there are no manifest targets for graph, DOT, or search-index files,
+  and there is no `diff`.
 - **No cross-project references.** Every referenced ID must be declared in
   the same project.
 

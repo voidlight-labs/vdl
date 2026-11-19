@@ -59,6 +59,9 @@ pub enum VdlError {
     #[error("Codegen error: {message}")]
     Codegen { message: String },
 
+    #[error("Graph error: {message}")]
+    Graph { message: String },
+
     #[error("IO error: {message}")]
     Io { message: String },
 

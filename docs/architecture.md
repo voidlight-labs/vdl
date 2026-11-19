@@ -3,12 +3,13 @@
 ```text
 VDL sources → Lexer → Schema parser → Project merge / import resolution
            → Schema validation → Markdown composition → guarded build output
+                              → Graph & search outputs (graph, search)
 ```
 
 Schema projects load nested sources, resolve file-local imports, validate a
 project-wide model, and render the Markdown targets declared in `vdl.toml`.
-`validate` and `compose` also accept a standalone schema document or a project
-without a manifest.
+`validate`, `compose`, `graph`, and `search` also accept a standalone schema
+document or a project without a manifest.
 
 ## Stage 1: Lexer (`src/lexer/`)
 
@@ -36,6 +37,18 @@ Markdown, with citation and heading-numbering options. Project builds read a
 `vdl.toml` manifest, validate output destinations, render all targets, and only
 then write outputs. Cycles encountered during composition are errors.
 
+## Stage 5: Graph and search (`src/graph/`)
+
+`graph::Graph::build` turns the validated document into nodes (entities in
+loader order) and edges (reference-field targets in authored order), entirely
+from the user-declared schema. Renderers serialize it: `graph::json` (pretty
+JSON, no timestamp), `graph::dot` (Graphviz digraph with per-type colors
+assigned by first appearance), and `graph::search` (a content index per entity
+for substring search). The CLI `graph` command emits any of the three formats
+and can narrow output to a one-hop neighborhood with `--root`; the `search`
+command queries the index directly. `--out` reuses the guarded write used by
+`compose`.
+
 ## Project Structure
 
 ```text
@@ -49,13 +62,15 @@ src/
 ├── project/           # discovery, manifest, guarded Markdown build
 ├── validator/         # schema validation rules and errors
 ├── codegen/compose.rs # schema model to Markdown
+├── graph/             # graph build, JSON/DOT/search-index renderers
 ├── fsutil.rs          # file identity and path safety
-└── cli/               # validate, compile, compose
+└── cli/               # validate, compile, compose, graph, search
 tests/
 ├── fixtures/schema/   # self-contained schema examples
 ├── fixtures/project/  # multi-file project with manifest
 ├── fixtures/invalid_cycle.vdl
 ├── cli_test.rs
+├── graph_test.rs      # graph/search end-to-end over multi-file projects
 ├── project_test.rs
 ├── schema_test.rs
 └── snapshot_test.rs   # schema Markdown output contract
@@ -68,6 +83,7 @@ tests/
 | `chumsky` 0.9 | Parser combinators |
 | `clap` 4.5 | CLI with derive macros |
 | `serde` | Manifest deserialization |
+| `serde_json` | Graph and search-index JSON output |
 | `thiserror` | Error type definitions |
 | `toml` 0.8 | `vdl.toml` parsing |
 | `miette` 7.2 | Diagnostic reporting |
@@ -75,5 +91,6 @@ tests/
 | `tempfile` (dev) | Temporary directories in tests |
 
 Direct dependencies removed with the legacy pipeline: `chrono`, `indexmap`,
-`regex`, `serde_json`, and the `insta` dev dependency. Some may remain as
+`regex`, and the `insta` dev dependency. `serde_json` returned with the
+schema-form graph and search-index output. Some removals may remain as
 transitive dependencies of retained crates.

@@ -13,6 +13,18 @@ pub struct Cli {
     pub command: Commands,
 }
 
+/// Output format for `vdl graph`.
+#[derive(Debug, Clone, Copy, Default, clap::ValueEnum)]
+pub enum GraphFormat {
+    /// JSON node and edge list.
+    #[default]
+    Json,
+    /// Graphviz DOT digraph.
+    Dot,
+    /// JSON search index over entity content.
+    Index,
+}
+
 #[derive(Subcommand)]
 pub enum Commands {
     /// Validate VDL files and report errors with precise locations.
@@ -53,5 +65,37 @@ pub enum Commands {
         /// How `cite`-flagged reference fields render: none, link, or short.
         #[arg(long)]
         cites: Option<String>,
+    },
+
+    /// Emit the project graph as JSON, Graphviz DOT, or a search index.
+    ///
+    /// The input may be one `.vdl` file or a directory of project sources,
+    /// loaded exactly like `validate`. Nodes are entities in declaration
+    /// order; edges are reference-field targets in authored order. No type or
+    /// field name is known to the compiler: the graph is read entirely from
+    /// the schema.
+    Graph {
+        /// Path to one .vdl schema document or a project directory.
+        path: String,
+        /// Output format: json, dot, or index.
+        #[arg(long, value_enum, default_value_t = GraphFormat::Json)]
+        format: GraphFormat,
+        /// Restrict output to one entity and its one-hop neighborhood.
+        #[arg(long)]
+        root: Option<String>,
+        /// Output file path. Prints to stdout when omitted.
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+
+    /// Search entity content for a case-insensitive substring.
+    ///
+    /// Matches entity IDs, type names, heading labels, text fields, and body
+    /// content; prints one line per matching entity in declaration order.
+    Search {
+        /// Case-insensitive substring to look for.
+        query: String,
+        /// Path to one .vdl schema document or a project directory.
+        path: String,
     },
 }
