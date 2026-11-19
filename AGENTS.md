@@ -150,10 +150,9 @@ changing discovery, manifests, or output writing.
 - `graph_test.rs` — graph/index/search over multi-file projects, one-hop
   filtering, determinism, and `--out` guards
 
-Known environment quirk: some `project_test` diagnostics-assertion tests can
-fail on narrow terminals due to `miette` stderr line-wrapping — pre-existing,
-not a regression. Verify against a clean checkout before treating failures
-as caused by your change.
+Diagnostic assertions use the whitespace-normalized `stderr()` helpers in
+each test file, so they are terminal-width tolerant (miette wraps stderr at
+the terminal width, with box-drawing continuation prefixes).
 
 ## Zed extension (`editors/zed/`)
 

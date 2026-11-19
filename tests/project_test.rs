@@ -33,7 +33,13 @@ where
 }
 
 fn stderr(output: &Output) -> String {
-    String::from_utf8_lossy(&output.stderr).into_owned()
+    // Collapse whitespace so assertions survive miette's terminal-width
+    // line wrapping, which differs between terminals and CI.
+    String::from_utf8_lossy(&output.stderr)
+        .replace('│', " ") // miette's box-drawing line prefix
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn stdout(output: &Output) -> String {

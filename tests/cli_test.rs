@@ -1,6 +1,16 @@
 use std::fs;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Output};
+
+/// Normalized stderr: collapses whitespace so assertions survive miette's
+/// terminal-width line wrapping, which differs between terminals and CI.
+fn stderr(output: &Output) -> String {
+    String::from_utf8_lossy(&output.stderr)
+        .replace('│', " ") // miette's box-drawing line prefix
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
 
 /// Helper: run the `vdl` binary via `cargo run -- <args>`.
 fn run_vdl<I, S>(args: I) -> std::process::Output
@@ -27,7 +37,7 @@ fn validate_rejects_removed_legacy_form() {
     let path = dir.path().join("legacy.vdl");
     fs::write(&path, "axiom \"old\" { version \"1.0\" }").unwrap();
     let output = run_vdl(["validate", path.to_str().unwrap()]);
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = stderr(&output);
     assert!(!output.status.success());
     assert!(stderr.contains("legacy form is no longer supported"), "{stderr}");
 }
@@ -39,7 +49,7 @@ fn validate_rejects_legacy_annotations() {
     fs::write(&path, "@author(\"person\")
 axiom \"old\" {}").unwrap();
     let output = run_vdl(["validate", path.to_str().unwrap()]);
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = stderr(&output);
     assert!(!output.status.success());
     assert!(stderr.contains("legacy form is no longer supported"), "{stderr}");
 }
@@ -49,7 +59,7 @@ fn removed_commands_are_rejected() {
     for command in ["diff"] {
         let output = run_vdl([command]);
         assert!(!output.status.success(), "{command} must not be available");
-        assert!(String::from_utf8_lossy(&output.stderr).contains("unrecognized subcommand"));
+        assert!(stderr(&output).contains("unrecognized subcommand"));
     }
 }
 
@@ -154,7 +164,7 @@ fn graph_unknown_root_fails() {
         "--root",
         "nope",
     ]);
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = stderr(&output);
 
     assert!(!output.status.success());
     assert!(stderr.contains("entity not found"), "stderr: {}", stderr);
@@ -171,7 +181,7 @@ fn graph_writes_output_file() {
         "--out",
         out.to_str().unwrap(),
     ]);
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = stderr(&output);
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(output.status.success(), "stderr: {}", stderr);
@@ -194,7 +204,7 @@ fn graph_rejects_output_over_input() {
         "--out",
         input.to_str().unwrap(),
     ]);
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = stderr(&output);
 
     assert!(!output.status.success());
     assert!(
@@ -286,7 +296,7 @@ fn stats_json_flag_emits_a_report_object() {
 fn compile_empty_directory_requires_manifest() {
     let dir = tempfile::tempdir().unwrap();
     let output = run_vdl(["compile", dir.path().to_str().unwrap()]);
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = stderr(&output);
     assert!(!output.status.success());
     assert!(stderr.contains("vdl.toml"), "{stderr}");
     assert!(stderr.contains("no build manifest"), "{stderr}");
@@ -295,7 +305,7 @@ fn compile_empty_directory_requires_manifest() {
 #[test]
 fn compose_reports_schema_composition_cycle() {
     let output = run_vdl(["compose", "tests/fixtures/invalid_cycle.vdl", "--root", "a"]);
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = stderr(&output);
     assert!(!output.status.success());
     assert!(stderr.contains("composition cycle: a -> b -> a"), "{stderr}");
 }
@@ -308,7 +318,7 @@ fn compose_reports_schema_composition_cycle() {
 fn test_validate_schema_document_success() {
     let output = run_vdl(["validate", "tests/fixtures/schema/runbooks.vdl"]);
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = stderr(&output);
 
     assert!(
         output.status.success(),
@@ -322,7 +332,7 @@ fn test_validate_schema_document_success() {
 #[test]
 fn test_validate_schema_document_failure() {
     let output = run_vdl(["validate", "tests/fixtures/schema/invalid_unresolved.vdl"]);
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = stderr(&output);
 
     assert!(!output.status.success(), "expected validation to fail");
     assert!(
@@ -345,7 +355,7 @@ fn test_compose_writes_file() {
         "--out",
         out.to_str().unwrap(),
     ]);
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = stderr(&output);
     assert!(output.status.success(), "stderr: {}", stderr);
 
     let content = fs::read_to_string(&out).expect("composed file should exist");
@@ -376,7 +386,7 @@ fn test_compose_unknown_root_fails() {
         "--root",
         "nope",
     ]);
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = stderr(&output);
 
     assert!(!output.status.success());
     assert!(stderr.contains("nope"), "stderr: {}", stderr);
@@ -407,7 +417,7 @@ fn test_compose_rejects_output_over_input() {
         "--out",
         input.to_str().unwrap(),
     ]);
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = stderr(&output);
 
     assert!(!output.status.success(), "expected a nonzero exit status");
     assert!(
@@ -459,7 +469,7 @@ fn test_compose_writes_distinct_markdown_path() {
         "--out",
         out.to_str().unwrap(),
     ]);
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = stderr(&output);
 
     assert!(output.status.success(), "stderr: {}", stderr);
     assert!(out.exists());
@@ -505,7 +515,7 @@ fn test_compose_rejects_hard_link_alias_of_input() {
         link.to_str().unwrap(),
     ]);
 
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = stderr(&output);
     assert!(
         stderr.contains("refusing to write output over the input"),
         "stderr: {}",
