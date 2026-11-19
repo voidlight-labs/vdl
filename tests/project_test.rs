@@ -697,7 +697,7 @@ output = "runbooks/same.md"
     let output = run_vdl(["compile", root.to_str().unwrap()]);
     let err = stderr(&output);
     assert!(!output.status.success(), "expected failure");
-    assert!(err.contains("same.md"), "{}", err);
+    assert!(err.contains("collides"), "{}", err);
     assert!(!root.join("dist/runbooks/same.md").exists());
 }
 
@@ -721,7 +721,7 @@ output = "../escaped.md"
     let output = run_vdl(["compile", root.to_str().unwrap()]);
     let err = stderr(&output);
     assert!(!output.status.success(), "expected failure");
-    assert!(err.contains("escaped.md"), "{}", err);
+    assert!(err.contains("escapes the project directory"), "{}", err);
     assert!(!root.join("escaped.md").exists());
     assert!(!root.join("dist/../escaped.md").exists());
 }
@@ -749,7 +749,7 @@ output = "schema.vdl"
     let output = run_vdl(["compile", root.to_str().unwrap()]);
     let err = stderr(&output);
     assert!(!output.status.success(), "expected failure");
-    assert!(err.contains("schema.vdl"), "{}", err);
+    assert!(err.contains(".vdl source extension"), "{}", err);
     assert_eq!(fs::read(&schema).expect("schema still readable"), before);
 }
 
@@ -778,7 +778,7 @@ output = "vdl.toml"
     let output = run_vdl(["compile", root.to_str().unwrap()]);
     let err = stderr(&output);
     assert!(!output.status.success(), "expected failure");
-    assert!(err.contains("vdl.toml"), "{}", err);
+    assert!(err.contains("over the build manifest"), "{}", err);
     assert_eq!(
         fs::read(&manifest).expect("manifest still readable"),
         configured
