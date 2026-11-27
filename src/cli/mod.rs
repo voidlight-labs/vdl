@@ -87,7 +87,7 @@ pub fn run() -> Result<()> {
 
     match args.command {
         commands::Commands::Validate { path } => cmd_validate(&path),
-        commands::Commands::Compile { path } => cmd_compile(&path),
+        commands::Commands::Compile { path, split_entities } => cmd_compile(&path, split_entities),
         commands::Commands::Compose { path, root, out, cites } => {
             cmd_compose(&path, &root, out.as_deref(), cites.as_deref())
         }
@@ -213,7 +213,7 @@ fn write_protected(project: &project::SchemaProject, out_path: &Path, contents: 
 ///
 /// A directory without a manifest is an error, not a fallback: there is no
 /// legacy graph pipeline anymore.
-fn cmd_compile(path: &str) -> Result<()> {
+fn cmd_compile(path: &str, split_entities: bool) -> Result<()> {
     let target = Path::new(path);
 
     if !target.is_dir() {
@@ -228,7 +228,7 @@ fn cmd_compile(path: &str) -> Result<()> {
         return Err(miette!("{}", project::missing_manifest_error(target)));
     }
 
-    let report = wrap(project::build_project(target))?;
+    let report = wrap(project::build_project_with_options(target, split_entities))?;
     for output in report.outputs {
         println!("  → {}", output.display());
     }

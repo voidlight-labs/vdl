@@ -10,7 +10,7 @@ mod build;
 mod loader;
 mod manifest;
 
-pub use build::{build_project, BuildReport};
+pub use build::{build_project, build_project_with_options, BuildReport};
 pub use loader::{discover_vdl_files, load_schema_project, SchemaProject};
 pub(crate) use loader::resolve_import_references;
 pub use manifest::{

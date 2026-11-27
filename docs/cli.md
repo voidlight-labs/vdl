@@ -18,7 +18,7 @@ vdl validate path/to/project/
 
 See [validation.md](validation.md) for the rules.
 
-## `vdl compile <project_dir>`
+## `vdl compile <project_dir> [--split-entities]`
 
 A project directory **must** contain `vdl.toml`. Every registered target is
 validated and rendered before the first output is written: `[[build.markdown]]`
@@ -28,11 +28,19 @@ whole project (identical bytes to `vdl graph --format`). A missing manifest is
 an error; there is no fallback pipeline. See [schema-projects.md](schema-projects.md)
 for the manifest shape.
 
+`--split-entities` writes one page per entity under
+`out_dir/entities/<package>/<full-entity-id>.md`. Reference fields and
+container child lists link to generated pages.
+
 ```bash
 vdl compile tests/fixtures/project
 # → tests/fixtures/project/dist/runbooks/deploy.md
 # → tests/fixtures/project/dist/runbooks/recovery.md
 # → Compilation complete.
+```
+
+```bash
+vdl compile path/to/project/ --split-entities
 ```
 
 ## `vdl compose <file_or_dir> --root <entity_id> [--out <file>] [--cites <mode>]`

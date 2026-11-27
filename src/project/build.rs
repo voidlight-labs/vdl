@@ -348,8 +348,26 @@ fn relative_link(from_dir: &Path, to: &Path) -> String {
     parts.join("/").replace(' ', "%20")
 }
 
+fn split_relative_link(from_dir: &Path, to: &Path) -> String {
+    let from: Vec<_> = from_dir.components().collect();
+    let to_components: Vec<_> = to.components().collect();
+    let common = from.iter().zip(to_components.iter()).take_while(|(a, b)| a == b).count();
+    let mut parts: Vec<String> = std::iter::repeat("..".to_owned()).take(from.len().saturating_sub(common)).collect();
+    parts.extend(to_components[common.min(to_components.len())..].iter().map(|part| part.as_os_str().to_string_lossy().to_string()));
+    if parts.is_empty() { parts.push(to.file_name().map(|name| name.to_string_lossy().to_string()).unwrap_or_default()); }
+    parts.iter().map(|part| url_encode_segment(part)).collect::<Vec<_>>().join("/")
+}
+
+fn url_encode_segment(value: &str) -> String {
+    value.bytes().map(|byte| if byte.is_ascii_alphanumeric() || b"-_.~".contains(&byte) { (byte as char).to_string() } else { format!("%{:02X}", byte) }).collect()
+}
+
 /// Compile the schema project rooted at `root` using its `vdl.toml` targets.
 pub fn build_project(root: &Path) -> VdlResult<BuildReport> {
+    build_project_with_options(root, false)
+}
+
+pub fn build_project_with_options(root: &Path, split_entities: bool) -> VdlResult<BuildReport> {
     let project = load_schema_project(root)?;
     let manifest = load_manifest(&project.root)?.ok_or_else(|| VdlError::Other {
         message: missing_manifest_error(&project.root),
@@ -382,6 +400,99 @@ pub fn build_project(root: &Path) -> VdlResult<BuildReport> {
     }
 
     let mut rendered: Vec<PlannedTarget> = Vec::new();
+
+    if split_entities {
+        let mut entity_paths = HashMap::new();
+        let mut child_lists = HashMap::<String, Vec<String>>::new();
+        let mut content_sections = HashMap::<String, Vec<(String, Vec<String>)>>::new();
+        for entity in &project.doc.entities {
+            let mut body_children = Vec::new();
+            let mut composed_children = Vec::new();
+            let mut sections = Vec::new();
+            if let Some(ty) = project.doc.type_decl(&entity.type_name) {
+                if let Some(body_field) = ty.body_field().filter(|field| !field.compose_targets.is_empty()) {
+                    if let Some(crate::model::Value::BracedBody(body)) = entity.value(&body_field.name) {
+                        body_children.extend(crate::model::body_include_directives(body).into_iter().filter_map(|(_, name)| {
+                            match crate::model::resolve_include_candidates(entity, name, &project.doc).as_slice() { [id] => Some(id.clone()), _ => None }
+                        }));
+                    }
+                }
+                if !body_children.is_empty() { sections.push(("Body includes".to_owned(), body_children.clone())); }
+                let composed_fields = ty.composed_fields().filter(|field| !field.inline).collect::<Vec<_>>();
+                for field in &composed_fields {
+                    if let Some(crate::model::Value::Refs(ids)) = entity.value(&field.name) {
+                        composed_children.extend(ids.iter().cloned());
+                        if !ids.is_empty() { sections.push((field.name.clone(), ids.clone())); }
+                    }
+                }
+                content_sections.insert(entity.id.clone(), sections);
+            }
+            child_lists.insert(entity.id.clone(), body_children.into_iter().chain(composed_children).collect());
+        }
+        let mut navigation = HashMap::<String, Vec<(String, Option<String>, Option<String>)>>::new();
+        for container_entity in &project.doc.entities {
+            let container = &container_entity.id;
+            let children = child_lists.get(container).map(Vec::as_slice).unwrap_or(&[]);
+        let mut groups = std::collections::BTreeMap::<PathBuf, Vec<String>>::new();
+            for child in children {
+                if let Some(instance) = project.doc.instance(child) {
+                    let folder = instance.source_location.file.parent().and_then(|path| path.strip_prefix(&project.root).ok()).unwrap_or(Path::new("")).to_path_buf();
+                    let group = groups.entry(folder).or_default();
+                    if !group.contains(child) { group.push(child.clone()); }
+                }
+            }
+            for group in groups.values().filter(|group| group.len() > 1) {
+                for (index, child) in group.iter().enumerate() {
+                    navigation.entry(child.clone()).or_default().push((
+                        container.clone(),
+                        index.checked_sub(1).and_then(|previous| group.get(previous).cloned()),
+                        group.get(index + 1).cloned(),
+                    ));
+                }
+            }
+        }
+        for entity in &project.doc.entities {
+            if !crate::codegen::split::valid_entity_id_for_filename(&entity.id) {
+                return Err(VdlError::Other { message: format!("entity ID '{}' cannot be represented as a split filename; expected lowercase ASCII segments separated by dots", entity.id) });
+            }
+            #[cfg(windows)]
+            if crate::codegen::split::filename_exceeds_windows_component_limit(&entity.id) {
+                return Err(VdlError::Other { message: format!("entity ID '{}' requires a {}-character filename including .md, exceeding Windows' 255-character filename limit", entity.id, entity.id.len() + 3) });
+            }
+            let path = crate::codegen::split::output_path(&entity.id);
+            let key = path.to_string_lossy().replace('\\', "/").to_lowercase();
+            if entity_paths.insert(entity.id.clone(), (path.clone(), key.clone())).is_some() {
+                return Err(VdlError::Other { message: format!("duplicate split output for entity '{}'", entity.id) });
+            }
+            if entity_paths.values().filter(|(_, candidate)| candidate == &key).count() > 1 {
+                return Err(VdlError::Other { message: format!("split output path collision on case-insensitive filesystems: '{}'", path.display()) });
+            }
+        }
+        for entity in &project.doc.entities {
+            let path = entity_paths.get(&entity.id).expect("planned entity path").0.clone();
+            let destination = out_dir.join("entities").join(path);
+            #[cfg(windows)]
+            {
+                let absolute_destination = canonical_anchor(&destination).map_err(|error| VdlError::Io {
+                    message: format!("could not resolve split output path '{}': {}", destination.display(), error),
+                })?;
+                if absolute_destination.as_os_str().to_string_lossy().encode_utf16().count() >= 260 {
+                    return Err(VdlError::Other { message: format!("split output path '{}' reaches Windows MAX_PATH (260 characters)", absolute_destination.display()) });
+                }
+            }
+            let links = entity_paths.iter().map(|(id, (target, _))| {
+                let target = out_dir.join("entities").join(target);
+                let instance = project.doc.instance(id).expect("planned entity exists");
+                let heading = project.doc.type_decl(&instance.type_name).and_then(|ty| ty.heading_field()).and_then(|field| match instance.value(&field.name) { Some(crate::model::Value::Text(value)) if !value.trim().is_empty() => Some(value.clone()), _ => None }).unwrap_or_else(|| id.clone());
+                (id.clone(), (split_relative_link(destination.parent().unwrap_or(&out_dir), &target), heading))
+            }).collect::<HashMap<_, _>>();
+            let sections = content_sections.get(&entity.id).map(Vec::as_slice).unwrap_or(&[]);
+            let contents = crate::codegen::split::render_entity(&project.doc, &entity.id, &links, sections, navigation.get(&entity.id).map(Vec::as_slice).unwrap_or(&[])).unwrap_or_default();
+            let relative = destination.strip_prefix(&out_dir).unwrap_or(&destination).to_path_buf();
+            let anchor = plan_destination("split entity", &relative, &out_dir, &out_anchor, &project, &rendered)?;
+            rendered.push(PlannedTarget { destination, anchor, contents });
+        }
+    }
 
     for (index, target) in manifest.markdown.iter().enumerate() {
         let label = format!("build.markdown[{}]", index + 1);

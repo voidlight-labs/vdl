@@ -37,6 +37,9 @@ pub enum Commands {
     Compile {
         /// Project directory containing vdl.toml.
         path: String,
+        /// Write one Markdown page per entity under entities/<package>/<full-id>.md.
+        #[arg(long)]
+        split_entities: bool,
     },
 
     /// Compose a schema document or project into one Markdown file.

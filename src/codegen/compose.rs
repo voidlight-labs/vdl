@@ -702,7 +702,7 @@ fn heading_text(instance: &Instance, type_decl: &TypeDecl) -> Option<String> {
 /// Everything YAML would otherwise reinterpret (booleans, nulls, numbers,
 /// leading zeros, control characters) stays a string because it is quoted and
 /// escaped here.
-fn yaml_double_quoted(value: &str) -> String {
+pub(crate) fn yaml_double_quoted(value: &str) -> String {
     let mut out = String::with_capacity(value.len() + 2);
     out.push('"');
     for c in value.chars() {
