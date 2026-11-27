@@ -107,17 +107,19 @@ vdl search deploy path/to/project/
 
 ## `vdl rename <old-id> <new-id> <file_or_dir> [--write]`
 
-Rename an entity ID across a project's sources: the entity's declaration,
-every reference to it (quoted, dotted, or bare), and exact
-`include <id>` directives in braced bodies. Quoted and dotted references are
-rewritten to the quoted new ID; bare references keep their bare spelling with
-the new ID's final segment, and a rewrite is refused when that spelling would
-resolve to something else. Include directives written as bare short names are
-reported as warnings for manual follow-up.
+Rename an entity ID across a project's sources: its package-local declaration,
+references, and `include <id>` directives in braced bodies. Bare references
+keep their bare form and use the new local name; dotted and quoted references
+keep their original form and receive the new full ID. A rename is refused when
+a preserved bare reference would resolve to something else. Includes are
+rewritten in their existing full or local spelling when they resolve to the
+renamed entity.
 
-Without `--write` the command prints a dry run (per-file edit counts) and
-writes nothing. The rewritten project is validated in memory before any file
-is touched, and revalidated after writing.
+Files named `<old-local>.vdl` and folders named `<old-local>` are renamed to
+the new local name. Without `--write` the command reports changed spellings,
+path moves, sorted-source order shifts, and edit totals without writing.
+With `--write`, the project is reloaded and validated, and its entity count
+must remain unchanged.
 
 ```bash
 vdl rename soul.alignment.foundation soul.alignment.core path/to/project/

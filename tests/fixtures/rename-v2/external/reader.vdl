@@ -1,0 +1,6 @@
+package external
+
+entity "Page" "external.reader" {
+    field "label" "External reader"
+    field "related" [ "guide.sections.child-a", guide.sections.child-a ]
+}

@@ -1,0 +1,8 @@
+package guide.sections
+
+entity "Page" "guide.sections.child-a" {
+    field "label" "Child A"
+    field "content" {
+        Child A body.
+    }
+}

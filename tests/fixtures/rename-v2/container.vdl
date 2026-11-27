@@ -1,0 +1,6 @@
+package guide.sections
+
+entity "Page" "guide.sections.container" {
+    field "label" "Container"
+    field "children" [ child-a, child-b ]
+}

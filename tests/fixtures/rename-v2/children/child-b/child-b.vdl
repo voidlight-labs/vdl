@@ -1,0 +1,16 @@
+package guide.sections
+
+entity "Page" "guide.sections.child-b" {
+    field "label" "Child B"
+    field "next" [ child-a ]
+    field "content" {
+        }
+        include guide.sections.child-a
+        include "guide.sections.child-a"
+        include child-a
+        ```markdown
+        include guide.sections.child-a
+        ```
+            include guide.sections.child-a
+    }
+}
