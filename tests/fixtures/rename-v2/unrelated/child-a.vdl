@@ -1,0 +1,5 @@
+package misc
+
+entity "Page" "misc.keep" {
+    field "label" "Unrelated file with matching filename"
+}

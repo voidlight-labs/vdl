@@ -87,7 +87,7 @@ pub fn run() -> Result<()> {
 
     match args.command {
         commands::Commands::Validate { path } => cmd_validate(&path),
-        commands::Commands::Compile { path } => cmd_compile(&path),
+        commands::Commands::Compile { path, split_entities } => cmd_compile(&path, split_entities),
         commands::Commands::Compose { path, root, out, cites } => {
             cmd_compose(&path, &root, out.as_deref(), cites.as_deref())
         }
@@ -213,7 +213,7 @@ fn write_protected(project: &project::SchemaProject, out_path: &Path, contents: 
 ///
 /// A directory without a manifest is an error, not a fallback: there is no
 /// legacy graph pipeline anymore.
-fn cmd_compile(path: &str) -> Result<()> {
+fn cmd_compile(path: &str, split_entities: bool) -> Result<()> {
     let target = Path::new(path);
 
     if !target.is_dir() {
@@ -228,7 +228,7 @@ fn cmd_compile(path: &str) -> Result<()> {
         return Err(miette!("{}", project::missing_manifest_error(target)));
     }
 
-    let report = wrap(project::build_project(target))?;
+    let report = wrap(project::build_project_with_options(target, split_entities))?;
     for output in report.outputs {
         println!("  → {}", output.display());
     }
@@ -323,11 +323,27 @@ fn cmd_stats(path: &str, json: bool) -> Result<()> {
 /// files are rewritten and the project is reloaded and revalidated as the
 /// final confirmation.
 fn cmd_rename(old: &str, new: &str, path: &str, write: bool) -> Result<()> {
-    let project = wrap(project::load_schema_project(Path::new(path)))?;
+    let source_path = Path::new(path);
+    let was_file = source_path.is_file();
+    let project = wrap(project::load_schema_project(source_path))?;
+    let entity_count = project.doc.entities.len();
     let plan = wrap(crate::rename::plan(&project, old, new))?;
 
     for (file, count) in plan.per_file() {
-        println!("  {} edit(s) in {}", count, file.display());
+        let renamed = plan.path_renames.iter().find(|(from, _)| from == &file);
+        println!("  {} edit(s) in {}{}", count, file.display(), renamed.map(|(_, to)| format!(" -> {}", to.display())).unwrap_or_default());
+        for edit in plan.edits.iter().filter(|edit| edit.file == file) {
+            println!("    {:?}: {} -> {}", edit.kind, plan.source_spelling(edit), edit.replacement);
+        }
+    }
+    for (from, to) in &plan.path_renames {
+        if !plan.edits.iter().any(|edit| &edit.file == from) {
+            let kind = if from.is_dir() { "folder" } else { "file" };
+            println!("  {kind}: {} -> {}", from.display(), to.display());
+        }
+    }
+    for shift in &plan.order_shifts {
+        println!("  order shift: {shift} (accept the shift or choose a name that preserves sorted order)");
     }
     if plan.total() == 0 {
         println!("No occurrences of \"{}\" outside its declaration.", plan.old);
@@ -335,6 +351,11 @@ fn cmd_rename(old: &str, new: &str, path: &str, write: bool) -> Result<()> {
     for warning in &plan.warnings {
         println!("warning: {warning}");
     }
+    let reload_path = if was_file {
+        plan.path_renames.iter().find(|(from, _)| from == source_path).map(|(_, to)| to.as_path()).unwrap_or(source_path)
+    } else {
+        source_path
+    };
     if !write {
         println!(
             "Dry run: {} edit(s) would rename \"{}\" to \"{}\". Re-run with --write to apply.",
@@ -346,7 +367,10 @@ fn cmd_rename(old: &str, new: &str, path: &str, write: bool) -> Result<()> {
     }
 
     plan.apply().map_err(|e| miette!("{}", e))?;
-    let reloaded = wrap(project::load_schema_project(Path::new(path)))?;
+    let reloaded = wrap(project::load_schema_project(reload_path))?;
+    if reloaded.doc.entities.len() != entity_count {
+        return Err(miette!("rename changed entity count from {} to {}; inspect the moved sources", entity_count, reloaded.doc.entities.len()));
+    }
     if reloaded.doc.instance(new).is_none() {
         return Err(miette!(
             "rename applied but \"{}\" is missing after reload; check the rewritten files",

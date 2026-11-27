@@ -1,0 +1,9 @@
+schema "guide" {
+    type "Page" {
+        field "label" text heading
+        field "children" ref "Page" optional
+        field "next" ref "Page" optional
+        field "related" ref "Page" optional
+        field "content" body compose ["Page"] optional
+    }
+}

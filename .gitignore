@@ -2,3 +2,13 @@
 *.snap.new
 .idea/
 .mimosa/
+
+# Local build/verification scratch (agent work artifacts)
+.cargo-target/
+.baseline-dist/
+.split-entities-snapshot/
+.split-round2-snapshot/
+.split-round4-snapshot/
+.split-round4-clean/
+.video_agent/
+.zcode/

@@ -2,7 +2,13 @@
 
 ## Planned
 
-Nothing is planned right now.
+### Split entity Markdown output
+
+**Status:** in progress
+**Recorded:** 2026-11-27
+
+Opt-in `vdl compile --split-entities` emits one Markdown page per schema
+entity while preserving the default composed-document build.
 
 ## Postponed
 
